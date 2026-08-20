@@ -172,15 +172,6 @@
   .search-btn:hover { background: #eeb75c; }
   .search-btn:disabled { opacity: 0.6; cursor: default; }
 
-  .debug-toggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--ink-dim);
-    margin-top: 12px;
-  }
-
   .status-line {
     font-size: 13px;
     color: var(--ink-dim);
@@ -359,32 +350,6 @@
     margin-top: 3px;
   }
 
-  details.debug {
-    margin-top: 20px;
-    border: 1px solid var(--stub-line);
-    border-radius: 8px;
-    background: var(--marquee-2);
-  }
-  details.debug summary {
-    padding: 10px 14px;
-    cursor: pointer;
-    font-size: 12px;
-    color: var(--ink-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  details.debug pre {
-    margin: 0;
-    padding: 14px;
-    font-size: 11px;
-    line-height: 1.5;
-    color: var(--ink-dim);
-    overflow-x: auto;
-    border-top: 1px solid var(--stub-line);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
   @media (prefers-reduced-motion: no-preference) {
     .card { transition: border-color 0.15s ease; }
   }
@@ -392,7 +357,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">2.5</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">2.7</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -481,20 +446,11 @@
     </div>
 
     <button class="search-btn" id="searchBtn" type="button">Find showtimes</button>
-
-    <div class="debug-toggle">
-      <input type="checkbox" id="debugToggle" />
-      <label for="debugToggle" style="margin:0; text-transform:none; letter-spacing:normal; font-size:12px;">Include raw debug output</label>
-    </div>
   </div>
 
   <div class="status-line" id="statusLine"></div>
   <div id="banners"></div>
   <div id="results"></div>
-  <details class="debug" id="debugPanel" style="display:none;">
-    <summary>Raw response</summary>
-    <pre id="debugOutput"></pre>
-  </details>
 </div>
 
 <script>
@@ -515,12 +471,9 @@
     locateBtn: document.getElementById('locateBtn'),
     loadMoviesBtn: document.getElementById('loadMoviesBtn'),
     searchBtn: document.getElementById('searchBtn'),
-    debugToggle: document.getElementById('debugToggle'),
     statusLine: document.getElementById('statusLine'),
     banners: document.getElementById('banners'),
     results: document.getElementById('results'),
-    debugPanel: document.getElementById('debugPanel'),
-    debugOutput: document.getElementById('debugOutput'),
   };
 
   let searchMode = 'movie'; // 'movie' | 'window'
@@ -759,8 +712,8 @@
 
     els.banners.innerHTML = '';
     els.results.innerHTML = '';
-    els.debugPanel.style.display = 'none';
     activeResultFormats = null; // fresh search -- reset to "all formats on"
+    activeResultChains = null; // fresh search -- reset to "all chains on"
 
     if (!movie || ((!lat || !lng) && !place) || !radius || !deadline) {
       els.banners.innerHTML = '<div class="banner error">Fill in movie, location, radius, and deadline before searching.</div>';
@@ -771,7 +724,6 @@
 
     const activeFormats = [...document.querySelectorAll('#formatChips .chip.on')].map((c) => c.dataset.format);
     const activeChains = [...document.querySelectorAll('#chainChips .chip.on')].map((c) => c.dataset.chain);
-    const debug = els.debugToggle.checked;
 
     const params = new URLSearchParams({
       movie, radiusMin: radius, deadline,
@@ -824,11 +776,6 @@
 
       renderResults(data);
 
-      if (debug) {
-        els.debugPanel.style.display = 'block';
-        els.debugOutput.textContent = JSON.stringify(data, null, 2);
-      }
-
       // Regal's results, if requested, merge in whenever they're ready --
       // completely independent of whether the block above already
       // rendered. A small "still checking" note shows in the meantime so
@@ -877,8 +824,8 @@
 
     els.banners.innerHTML = '';
     els.results.innerHTML = '';
-    els.debugPanel.style.display = 'none';
     activeResultFormats = null; // fresh search -- reset to "all formats on"
+    activeResultChains = null; // fresh search -- reset to "all chains on"
 
     if (((!lat || !lng) && !place) || !radius || !availableFrom || !hours) {
       els.banners.innerHTML = '<div class="banner error">Fill in location, radius, "free from" time, and how many hours before searching.</div>';
@@ -904,7 +851,6 @@
 
     const activeFormats = [...document.querySelectorAll('#formatChips .chip.on')].map((c) => c.dataset.format);
     const activeChains = [...document.querySelectorAll('#chainChips .chip.on')].map((c) => c.dataset.chain);
-    const debug = els.debugToggle.checked;
 
     const params = new URLSearchParams({
       radiusMin: radius,
@@ -936,11 +882,6 @@
       }
 
       renderResults(data, { showMovieName: true });
-
-      if (debug) {
-        els.debugPanel.style.display = 'block';
-        els.debugOutput.textContent = JSON.stringify(data, null, 2);
-      }
     } catch (err) {
       els.banners.innerHTML = `<div class="banner error">Couldn't reach the server. Is ./start.sh still running? (${err.message})</div>`;
       els.statusLine.textContent = '';
@@ -955,6 +896,24 @@
   // but gets reset to "all on" whenever a genuinely new search runs
   // (see the reset calls in runSearch/runWindowSearch).
   let activeResultFormats = null; // null = not yet initialized for this result set
+
+  // Post-search chain filter -- same pattern as activeResultFormats
+  // above (any subset can be on, resets to "all on" for a genuinely new
+  // search), but a separate Set since a person may want, say, only
+  // Standard format AND only AMC/Regal at the same time -- these are
+  // two independent filters over the same result set, not one combined
+  // control.
+  let activeResultChains = null; // null = not yet initialized for this result set
+
+  const CHAIN_DISPLAY_NAMES = {
+    amc: "AMC",
+    regal: "Regal",
+    cinemark: "Cinemark",
+    cinemawest: "Cinema West",
+    harkins: "Harkins",
+    regency: "Regency",
+    other: "Other",
+  };
 
   // Sort mode for the already-rendered result set -- purely client-side,
   // same instant-no-refetch pattern as the format filter above, since
@@ -1033,6 +992,16 @@
   }
   window.toggleResultFormat = toggleResultFormat; // reachable from inline onclick handlers below
 
+  function toggleResultChain(chain) {
+    if (activeResultChains.has(chain)) {
+      activeResultChains.delete(chain);
+    } else {
+      activeResultChains.add(chain);
+    }
+    renderResults(lastRenderData, lastRenderOpts);
+  }
+  window.toggleResultChain = toggleResultChain; // reachable from inline onclick handlers below
+
   function setResultSortMode(mode) {
     if (resultSortMode === mode) return;
     resultSortMode = mode;
@@ -1069,8 +1038,12 @@
     if (activeResultFormats === null) {
       activeResultFormats = new Set(allFormats); // default: everything on
     }
+    const allChains = [...new Set(allResults.map((r) => r.chain).filter(Boolean))];
+    if (activeResultChains === null) {
+      activeResultChains = new Set(allChains); // default: everything on
+    }
 
-    const results = allResults.filter((r) => activeResultFormats.has(r.format));
+    const results = allResults.filter((r) => activeResultFormats.has(r.format) && activeResultChains.has(r.chain));
 
     const priced = results.filter((r) => r.price != null).length;
     const totalFound = data.matchingShowings ?? allResults.length;
@@ -1150,6 +1123,20 @@
         }).join('')}</div>`
       : '';
 
+    // Chain filter chips -- same pattern and same styling as the format
+    // chips just above (independent pill toggles, any subset can be
+    // on), just filtering a different field. Only rendered when there's
+    // more than one chain actually present in this result set, same
+    // rule as the format chips -- a single-chain search doesn't need a
+    // filter for a choice that doesn't exist.
+    const chainChipsHtml = allChains.length > 1
+      ? `<div class="chips" style="margin-bottom:12px;">${allChains.map((c) => {
+          const on = activeResultChains.has(c);
+          const label = CHAIN_DISPLAY_NAMES[c] || c;
+          return `<button class="chip ${on ? 'on' : ''}" onclick="toggleResultChain(${JSON.stringify(c).replace(/"/g, '&quot;')})">${escapeHtml(label)}</button>`;
+        }).join('')}</div>`
+      : '';
+
     // Sort toggle -- always rendered (unlike the format chips, which
     // only show up when there's more than one format to choose from),
     // since distance-vs-price is a meaningful choice regardless of how
@@ -1166,7 +1153,7 @@
     </div>`;
 
     if (results.length === 0) {
-      els.results.innerHTML = filterChipsHtml + sortToggleHtml + '<div class="empty">No showings match the selected format(s) -- try enabling more above.</div>';
+      els.results.innerHTML = filterChipsHtml + chainChipsHtml + sortToggleHtml + '<div class="empty">No showings match the selected format(s)/chain(s) -- try enabling more above.</div>';
       return;
     }
 
@@ -1197,7 +1184,7 @@
       if (cheapestResult == null || r.price < cheapestResult.price) cheapestResult = r;
     }
 
-    els.results.innerHTML = filterChipsHtml + sortToggleHtml + `<div class="list">${displayResults.map((r) =>
+    els.results.innerHTML = filterChipsHtml + chainChipsHtml + sortToggleHtml + `<div class="list">${displayResults.map((r) =>
       buildCardHtml(r, r === cheapestResult, opts)
     ).join('')}</div>`;
   }

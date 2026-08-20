@@ -748,7 +748,7 @@ app.get("/api/search", async (req, res) => {
     // SerpApi) -- filters a raw showing to the search window and builds
     // the final result shape. Centralizing this once avoids repeating
     // the same deadline/radius/format logic four more times per chain.
-    function buildResultIfWithinWindow({ theaterName, distanceMin, startTimeRaw, format, price, priceExtras, bookingLink, priceSource }) {
+    function buildResultIfWithinWindow({ theaterName, distanceMin, startTimeRaw, format, price, priceExtras, bookingLink, priceSource, chain }) {
       const startMin = parseGoogleTime(startTimeRaw);
       if (startMin === null) return null;
 
@@ -766,6 +766,15 @@ app.get("/api/search", async (req, res) => {
       const built = {
         theaterName,
         distanceMin,
+        // Chain identity, independent of priceSource -- priceSource is
+        // null whenever pricing failed for this specific showing, which
+        // would otherwise make that card invisible to a chain filter
+        // even though the theater and chain are both known regardless
+        // of whether a price was found. "other" covers theaters found
+        // only through SerpApi's general listing (indie/regional chains
+        // this project has no direct adapter for), not a gap -- it's a
+        // real, meaningful bucket for the chain-filter chips.
+        chain: chain || "other",
         format,
         startTime: startTimeRaw,
         estimatedEndTime: formatEndTimeRange(startTimeRaw, realRuntimeMin, trailerLow, trailerHigh),
@@ -862,6 +871,7 @@ app.get("/api/search", async (req, res) => {
           startTimeRaw: entry.time,
           format: entry.format,
           price: entry.price,
+          chain: "other",
           bookingLink: entry.link,
         });
         if (built) results.push(built);
@@ -906,6 +916,7 @@ app.get("/api/search", async (req, res) => {
                 startTimeRaw: showing.time.slice(0, 5), // "HH:MM:SS" -> "HH:MM", parseGoogleTime already handles bare 24hr
                 format: showing.format,
                 price: showing.price,
+                chain: "amc",
                 priceSource: showing.price != null ? "amc-direct" : null,
                 // Real, confirmed link straight from AMC's own official
                 // API -- was falling back to a Google search guess
@@ -1038,6 +1049,7 @@ app.get("/api/search", async (req, res) => {
               distanceMin: distanceMinByTheaterId[s.theaterId],
               startTimeRaw,
               format: s.format,
+              chain: "cinemark",
             });
             if (wouldBeInWindow) toPrice.push({ theaterName, match: s, startTimeRaw });
           }
@@ -1058,6 +1070,7 @@ app.get("/api/search", async (req, res) => {
                     startTimeRaw,
                     format: match.format,
                     price: priced.price,
+                    chain: "cinemark",
                     priceSource: priced.price != null ? "cinemark-direct" : null,
                     bookingLink: googleFallbackLink(theaterName, movie),
                     priceExtras: {
@@ -1137,6 +1150,7 @@ app.get("/api/search", async (req, res) => {
                 distanceMin: theater.distanceMin,
                 startTimeRaw,
                 format: match.format,
+                chain: "cinemawest",
               });
               if (!wouldBeInWindow) continue;
 
@@ -1152,6 +1166,7 @@ app.get("/api/search", async (req, res) => {
                   startTimeRaw,
                   format: match.format,
                   price: priced.price,
+                  chain: "cinemawest",
                   priceSource: priced.price != null ? "cinemawest-direct" : null,
                   // Confirmed real, but theater-page level not session-
                   // specific -- goes to the theater's showtimes page,
@@ -1266,6 +1281,7 @@ app.get("/api/search", async (req, res) => {
                   distanceMin: theater.distanceMin,
                   startTimeRaw,
                   format: harkinsDisplayFormat(perf.format),
+                  chain: "harkins",
                 });
                 if (!wouldBeInWindow) {
                   outsideWindow++;
@@ -1288,6 +1304,7 @@ app.get("/api/search", async (req, res) => {
                     startTimeRaw,
                     format: harkinsDisplayFormat(perf.format),
                     price: priced.price != null ? Math.round((priced.price + harkinsFee) * 100) / 100 : null,
+                    chain: "harkins",
                     priceSource: priced.price != null ? "harkins-direct" : null,
                     // Real, confirmed SESSION-specific URL, provided
                     // directly: harkins.com/ticketing/theatre/{harkinsId}/
@@ -1480,6 +1497,7 @@ app.get("/api/search", async (req, res) => {
                 distanceMin: theater.distanceMin,
                 startTimeRaw: perf.time,
                 format: perf.format,
+                chain: "regency",
               });
               if (!wouldBeInWindow) {
                 outsideWindow++;
@@ -1508,6 +1526,7 @@ app.get("/api/search", async (req, res) => {
                   startTimeRaw: perf.time,
                   format: perf.format,
                   price: priced.price != null ? Math.round((priced.price + regencyFee) * 100) / 100 : null,
+                  chain: "regency",
                   priceSource: priced.price != null ? "regency-direct" : null,
                   // Confirmed real URL pattern from live captures --
                   // this is the exact same seat-selection page the site
@@ -2024,6 +2043,7 @@ app.get("/api/search-regal", async (req, res) => {
       return {
         theaterName,
         distanceMin,
+        chain: "regal",
         format: "Standard",
         startTime: startTimeRaw,
         estimatedEndTime: formatEndTimeRangeStandalone(startTimeRaw, realRuntimeMin, trailerLow, trailerHigh),

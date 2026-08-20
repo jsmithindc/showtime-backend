@@ -1,0 +1,37 @@
+#!/bin/bash
+set -e
+
+cd "$(dirname "$0")"
+
+if [ ! -d "node_modules" ]; then
+  echo "Installing dependencies..."
+  npm install
+fi
+
+export SERPAPI_KEY="paste-your-real-key-here"
+export SCRAPEDO_TOKEN="paste-your-real-token-here"
+# Optional second provider for Regal pricing -- if set, Regal calls
+# automatically fall over to ZenRows once Scrape.do's quota is
+# exhausted, instead of failing outright.
+export ZENROWS_API_KEY="paste-your-real-key-here"
+export AMC_VENDOR_KEY="paste-your-real-key-here"
+export DISABLE_REGAL_PRICING="false"  # set to "true" to pause Regal/Scrape.do pricing again
+export DISABLE_CINEMARK_PRICING="false"  # set to "true" to pause Cinemark direct pricing
+# Cinema West (Country Club Cinema) fetches its own access token live --
+# no manual setup needed here anymore.
+# Uncomment and set a real password before exposing this beyond localhost
+# (e.g. via Railway, or a Cloudflare Tunnel) to share with friends. Leave
+# commented out for normal local-only use -- no login prompt when unset.
+# export APP_PASSWORD="pick-something-only-your-friends-know"
+
+echo "Starting Showtime Finder on http://localhost:${PORT:-3000}"
+node server.js
+
+# --- SETUP ---
+# This is a template, safe to commit -- it has no real secrets in it.
+# To actually run this app locally:
+#   cp start.sh.example start.sh
+#   (edit start.sh, paste in real values)
+#   chmod +x start.sh
+#   ./start.sh
+# start.sh itself is gitignored, so your real keys never get committed.

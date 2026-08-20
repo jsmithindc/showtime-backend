@@ -98,6 +98,40 @@ fill those in before Path B can do anything.
 - Does `getTicketsForSession` fire at all, and does its JSON match the
   shape `extractPricedShowtimes()` expects?
 
+## Deploying (Railway)
+
+This app is stateless and reads all secrets from environment variables
+(see `.env.example` for the full list), so it deploys cleanly to Railway
+with no code changes:
+
+1. Push this repo to GitHub. `start.sh` and `node_modules/` are
+   gitignored on purpose -- `start.sh` has real API keys hardcoded into
+   it, and must never be committed. Use `start.sh.example` (safe,
+   placeholder values) as the local-dev template instead.
+2. Railway → New Project → Deploy from GitHub repo → select this repo.
+3. In Railway's dashboard → Settings → Variables, add each variable
+   listed in `.env.example` with your real values (`SERPAPI_KEY`,
+   `SCRAPEDO_TOKEN`, `AMC_VENDOR_KEY`, and optionally `ZENROWS_API_KEY`,
+   `DISABLE_REGAL_PRICING`, `DISABLE_CINEMARK_PRICING`). Do **not** set
+   `PORT` -- Railway assigns and injects that automatically, and
+   `server.js` already reads `process.env.PORT` with a fallback.
+4. Set `APP_PASSWORD` too once this has a public URL rather than
+   `localhost` -- without it, anyone with the link can run searches
+   against your API keys and consume your quota. This is a real,
+   functioning gate (`server.js` line ~46), not just a comment.
+5. Railway auto-detects `npm install` + the `start` script in
+   `package.json` (`node server.js`) -- no extra config needed. It
+   gives you a public HTTPS URL as soon as the first deploy succeeds.
+
+One thing worth confirming on the first real deploy rather than
+assuming: Regal's pricing path routes through Scrape.do/ZenRows
+specifically to get past Cloudflare's bot protection. A cloud host's
+datacenter IP sometimes gets treated differently than a home connection
+-- it may work identically (routing already goes through those
+providers either way), but it's worth watching the first real Regal
+search on the deployed instance rather than assuming it behaves exactly
+like local.
+
 ## Known limitations, honestly
 
 - **Theater coverage depends on OpenStreetMap data quality in your area.**
@@ -127,8 +161,17 @@ fill those in before Path B can do anything.
   shape differs from its docs, the parsing in `lib/theaters-overpass.js`
   or `lib/priceAdapters/serpapi.js` is the place to adjust.
 
-## Files no longer needed
+## Note on this README
 
-`lib/priceAdapters/{amc,regal,cinemark,fandango}.js` are still here as
-stubs in case SerpApi's price coverage turns out too spotty for theaters
-you care about, but nothing calls them right now.
+Everything above "Deploying (Railway)" describes an earlier version of
+this project (SerpApi-only pricing, a fixed runtime constant, no live
+network testing) and predates AMC/Regal/Harkins/Cinemark/Cinema
+West/Regency all being live, directly-integrated adapters with real
+pricing. It's kept as-is for now rather than silently rewritten, since
+untangling which parts are still true needs a real pass -- flagged here
+so it's not mistaken for current documentation. The "Files no longer
+needed" section that used to follow this one has been removed outright
+rather than left stale: it referenced `amc.js`, `regal.js`, `cinemark.js`,
+and `fandango.js` as present-but-unused stubs, and all four (plus
+`index.js` and `regal-scrape.js`) have since been deleted as genuinely
+dead code.
