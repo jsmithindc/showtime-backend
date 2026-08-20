@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.showtimefinder.server</string>
+
+    <!-- Runs start.sh through a LOGIN shell (-l), not a bare bash
+         invocation. This is the fix for the number-one thing that trips
+         people up with launchd: it normally runs jobs with a minimal
+         PATH that doesn't include wherever Homebrew/nvm/etc. actually
+         installed node, causing a mysterious "node: command not found"
+         failure that doesn't happen when you run the same script by
+         hand. A login shell sources your normal shell config (.zshrc
+         etc.) and picks up the exact same PATH your Terminal already uses. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-l</string>
+        <string>-c</string>
+        <string>cd ~/Downloads/showtime-backend &amp;&amp; ./start.sh</string>
+    </array>
+
+    <!-- Starts automatically whenever this job is loaded: both right now
+         (via launchctl load) and again on every future login, since
+         LaunchAgents reload at login by default. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restarts automatically if the process ever crashes or exits
+         unexpectedly. Does not mean "restart forever no matter what";
+         launchd backs off automatically if a job keeps failing
+         immediately after start. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/showtime-finder.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/showtime-finder.log</string>
+</dict>
+</plist>

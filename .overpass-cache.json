@@ -1,0 +1,175 @@
+{
+  "33.8644,-118.0539,14752": {
+    "theaters": [
+      {
+        "name": "Main Street Cinema House",
+        "lat": 33.8107105,
+        "lng": -117.9188509,
+        "address": "Main Street"
+      },
+      {
+        "name": "Regency Norwalk 8",
+        "lat": 33.9050443,
+        "lng": -118.0843215,
+        "address": "Pioneer Boulevard"
+      },
+      {
+        "name": "CGV Buena Park",
+        "lat": 33.8597102,
+        "lng": -117.9962921,
+        "address": "Beach Boulevard"
+      },
+      {
+        "name": "AMC Anaheim GardenWalk 6",
+        "lat": 33.8058754,
+        "lng": -117.9123866,
+        "address": null
+      },
+      {
+        "name": "Edwards Long Beach Stadium 26 & IMAX",
+        "lat": 33.8307637,
+        "lng": -118.0868601,
+        "address": "East Carson"
+      },
+      {
+        "name": "Starlight Cinemas",
+        "lat": 33.8518218,
+        "lng": -118.135924,
+        "address": "Faculty Avenue"
+      },
+      {
+        "name": "Mickey’s PhilharMagic",
+        "lat": 33.8080132,
+        "lng": -117.9181302,
+        "address": null
+      },
+      {
+        "name": "Magic Eye Theater",
+        "lat": 33.8114219,
+        "lng": -117.9172928,
+        "address": null
+      },
+      {
+        "name": "Fox Theatre",
+        "lat": 33.8743574,
+        "lng": -117.9239842,
+        "address": "North Harbor Boulevard"
+      },
+      {
+        "name": "Regal Garden Grove",
+        "lat": 33.7899909,
+        "lng": -117.962845,
+        "address": "Chapman Avenue"
+      },
+      {
+        "name": "Regency Theatres",
+        "lat": 33.7595984,
+        "lng": -118.0106384,
+        "address": null
+      },
+      {
+        "name": "Krikorian Buena Park Metroplex 18",
+        "lat": 33.8435808,
+        "lng": -117.9893517,
+        "address": "La Palma Ave"
+      },
+      {
+        "name": "Edwards Cerritos Stadium 10",
+        "lat": 33.871299,
+        "lng": -118.0588249,
+        "address": "Towne Center Drive"
+      },
+      {
+        "name": "United Artists Long Beach 6",
+        "lat": 33.7561688,
+        "lng": -118.107523,
+        "address": "East Pacific Coast Highway"
+      },
+      {
+        "name": "AMC Marina Pacifica 12",
+        "lat": 33.7593491,
+        "lng": -118.1142959,
+        "address": "East Pacific Coast Highway"
+      },
+      {
+        "name": "Art Theatre",
+        "lat": 33.7720014,
+        "lng": -118.1669933,
+        "address": "East 4th Street"
+      },
+      {
+        "name": "Studio Movie Grill Downey",
+        "lat": 33.9422543,
+        "lng": -118.13335,
+        "address": null
+      },
+      {
+        "name": "BIANCHI  Stadium 11",
+        "lat": 33.9030051,
+        "lng": -118.1631299,
+        "address": "Rosecrans Avenue"
+      },
+      {
+        "name": "AMC Norwalk 20",
+        "lat": 33.9135771,
+        "lng": -118.0711845,
+        "address": "Civic Center Drive"
+      },
+      {
+        "name": "Regal Edwards South Gate & IMAX",
+        "lat": 33.9518489,
+        "lng": -118.1616327,
+        "address": "Garfield Avenue"
+      },
+      {
+        "name": "Harkins Cerritos 16",
+        "lat": 33.8614406,
+        "lng": -118.0948249,
+        "address": "Los Cerritos Center"
+      },
+      {
+        "name": "Starlight Cinemas West Grove",
+        "lat": 33.7866442,
+        "lng": -118.02951,
+        "address": "Valley View Avenue"
+      },
+      {
+        "name": "Whittier Village Cinemas",
+        "lat": 33.9778201,
+        "lng": -118.0370307,
+        "address": null
+      },
+      {
+        "name": "Regal La Habra Stadium 16",
+        "lat": 33.9188114,
+        "lng": -117.9605211,
+        "address": "West Imperial Highway"
+      },
+      {
+        "name": "Cinemark Downey 14 and XD",
+        "lat": 33.920935,
+        "lng": -118.1316639,
+        "address": "Apollo Way"
+      },
+      {
+        "name": "AMC La Mirada 7",
+        "lat": 33.8970336,
+        "lng": -118.0055335,
+        "address": null
+      },
+      {
+        "name": "Bay Theater",
+        "lat": 33.7437677,
+        "lng": -118.1027064,
+        "address": null
+      },
+      {
+        "name": "Paramount Drive-in Theaters",
+        "lat": 33.9000198,
+        "lng": -118.1622842,
+        "address": null
+      }
+    ],
+    "fetchedAt": 1787194402680
+  }
+}

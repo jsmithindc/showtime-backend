@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Showtime Finder</title>
+<style>
+  :root {
+    --ink: #f4efe6;
+    --ink-dim: #b8ada0;
+    --marquee: #14121a;
+    --marquee-2: #1d1a24;
+    --marquee-3: #252030;
+    --gold: #e2a545;
+    --gold-dim: #8a6a34;
+    --stub-line: #3a3444;
+    --best: #7fa66b;
+    --warn: #c98a3d;
+    --error: #c96a5a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--marquee);
+    color: var(--ink);
+    margin: 0;
+    padding: 28px 18px 64px;
+    min-height: 100vh;
+  }
+
+  .wrap { max-width: 720px; margin: 0 auto; }
+
+  h1 {
+    font-family: Georgia, "Times New Roman", serif;
+    font-style: italic;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    font-size: 30px;
+    color: var(--gold);
+    margin: 0 0 2px;
+  }
+
+  .subtitle {
+    color: var(--ink-dim);
+    font-size: 13px;
+    margin: 0 0 22px;
+  }
+
+  .panel {
+    background: var(--marquee-2);
+    border: 1px solid var(--stub-line);
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 22px;
+  }
+
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+
+  .field { flex: 1 1 160px; min-width: 130px; }
+  .field.wide { flex-basis: 260px; }
+
+  label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-dim);
+    margin-bottom: 6px;
+  }
+
+  input[type="text"],
+  input[type="number"],
+  input[type="time"] {
+    width: 100%;
+    background: var(--marquee);
+    border: 1px solid var(--stub-line);
+    color: var(--ink);
+    border-radius: 6px;
+    padding: 9px 10px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+
+  input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+
+  .coord-row { display: flex; gap: 8px; align-items: flex-end; }
+  .coord-row .field { flex: 1; }
+
+  .locate-btn {
+    background: var(--marquee-3);
+    border: 1px solid var(--stub-line);
+    color: var(--gold);
+    border-radius: 6px;
+    padding: 9px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .locate-btn:hover { border-color: var(--gold-dim); }
+  .locate-btn:disabled { opacity: 0.5; cursor: default; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+
+  .chip {
+    font-size: 12.5px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--stub-line);
+    background: transparent;
+    color: var(--ink-dim);
+    cursor: pointer;
+  }
+  .chip.on {
+    border-color: var(--gold);
+    color: var(--marquee);
+    background: var(--gold);
+    font-weight: 600;
+  }
+
+  /* Deliberately NOT reusing .chip here. The format/chain filters are
+     independent pill toggles (any subset can be on), so their rounded,
+     individually-bordered look correctly signals "pick any of these."
+     Sort mode is a mutually-exclusive EITHER/OR choice -- exactly one
+     is always active -- so it gets a segmented-control look instead:
+     one shared rectangular border, a divider between the two options,
+     sharp corners instead of full pills, and a neutral dark fill
+     instead of gold (gold is used elsewhere for price/selection
+     emphasis; reusing it here would visually imply this is another
+     filter chip row rather than a different kind of control). */
+  .sort-toggle {
+    display: inline-flex;
+    border: 1px solid var(--stub-line);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 12px;
+  }
+  .sort-toggle button {
+    font-size: 12.5px;
+    padding: 6px 14px;
+    border: none;
+    border-right: 1px solid var(--stub-line);
+    background: transparent;
+    color: var(--ink-dim);
+    cursor: pointer;
+  }
+  .sort-toggle button:last-child { border-right: none; }
+  .sort-toggle button.on {
+    background: var(--ink-dim);
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .search-btn {
+    width: 100%;
+    background: var(--gold);
+    color: var(--marquee);
+    border: none;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .search-btn:hover { background: #eeb75c; }
+  .search-btn:disabled { opacity: 0.6; cursor: default; }
+
+  .debug-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--ink-dim);
+    margin-top: 12px;
+  }
+
+  .status-line {
+    font-size: 13px;
+    color: var(--ink-dim);
+    margin-bottom: 14px;
+    min-height: 18px;
+  }
+  .status-line b { color: var(--gold); }
+
+  .banner {
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 13px;
+    margin-bottom: 16px;
+    line-height: 1.5;
+  }
+  .banner.warn { background: rgba(201, 138, 61, 0.12); border: 1px solid var(--warn); color: var(--warn); }
+  .banner.error { background: rgba(201, 106, 90, 0.12); border: 1px solid var(--error); color: var(--error); }
+
+  .empty {
+    border: 1px dashed var(--stub-line);
+    border-radius: 10px;
+    padding: 30px 18px;
+    text-align: center;
+    color: var(--ink-dim);
+    font-size: 14px;
+  }
+
+  .list { display: flex; flex-direction: column; gap: 10px; }
+
+  .card {
+    display: flex;
+    align-items: stretch;
+    background: var(--marquee-2);
+    border: 1px solid var(--stub-line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .card.best { border-color: var(--best); }
+
+  .price-col {
+    width: 200px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px dashed var(--stub-line);
+    padding: 12px 8px;
+    text-align: center;
+  }
+  .price {
+    font-family: Georgia, serif;
+    font-weight: 700;
+    font-size: 19px;
+    color: var(--gold);
+  }
+  .price.unknown {
+    font-size: 12px;
+    color: var(--ink-dim);
+    font-weight: 400;
+  }
+  .price-breakdown {
+    font-size: 10.5px;
+    color: var(--ink-dim);
+    font-weight: 400;
+    margin-top: 2px;
+    line-height: 1.3;
+  }
+  .stubs-stub {
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--stub-line);
+    max-width: 184px;
+    white-space: nowrap;
+  }
+  .stubs-eyebrow {
+    display: block;
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #b5563f;
+    margin-bottom: 2px;
+  }
+  .stubs-price-main {
+    font-family: Georgia, serif;
+    font-weight: 700;
+    font-size: 18px;
+    color: #b34a2e;
+    background: rgba(207, 122, 99, 0.14);
+    padding: 1px 5px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .stubs-price-caption {
+    font-size: 9px;
+    color: var(--ink-dim);
+    margin-left: 3px;
+  }
+  .stubs-price-online {
+    font-size: 9.5px;
+    color: var(--ink-dim);
+    margin-top: 1px;
+    line-height: 1.3;
+    white-space: nowrap;
+  }
+  .best-tag {
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--best);
+    font-weight: 700;
+    margin-top: 4px;
+  }
+
+  .card-body { flex: 1; padding: 12px 16px; min-width: 0; }
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .theater-name { font-weight: 600; font-size: 15px; }
+  .dist { font-size: 12px; color: var(--ink-dim); white-space: nowrap; }
+
+  .meta {
+    margin-top: 6px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--ink-dim);
+  }
+  .format-badge {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--gold);
+    border: 1px solid var(--gold-dim);
+    border-radius: 4px;
+    padding: 2px 7px;
+  }
+  .time { color: var(--ink); font-weight: 500; }
+  /* Matches .price's visual weight (same font/size/weight) so the
+     showtime reads as equally important as the price at a glance --
+     ink-colored rather than gold to keep price as the one gold "hero"
+     number on the card, per the ticket-stub design language. */
+  .time-large {
+    font-family: Georgia, serif;
+    font-weight: 700;
+    font-size: 19px;
+    color: var(--ink);
+    margin-top: 6px;
+  }
+  .time-sub {
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    margin-top: 2px;
+  }
+
+  .card-link {
+    display: inline-block;
+    margin-top: 8px;
+    font-size: 12.5px;
+    color: var(--gold-dim);
+    text-decoration: none;
+  }
+  .card-link:hover { color: var(--gold); text-decoration: underline; }
+
+  .price-source {
+    font-size: 10.5px;
+    color: var(--ink-dim);
+    margin-top: 3px;
+  }
+
+  details.debug {
+    margin-top: 20px;
+    border: 1px solid var(--stub-line);
+    border-radius: 8px;
+    background: var(--marquee-2);
+  }
+  details.debug summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  details.debug pre {
+    margin: 0;
+    padding: 14px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--ink-dim);
+    overflow-x: auto;
+    border-top: 1px solid var(--stub-line);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .card { transition: border-color 0.15s ease; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">2.5</span></h1>
+  <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
+
+  <div class="panel">
+    <div class="row" style="margin-bottom:12px;">
+      <button class="chip on" id="modeMovieBtn" type="button">Search a specific movie</button>
+      <button class="chip" id="modeWindowBtn" type="button">What fits my free time?</button>
+    </div>
+
+    <div id="specificMovieFields">
+      <div class="row">
+        <div class="field wide" style="flex-basis:100%;">
+          <label for="movie">Movie</label>
+          <div style="display:flex; gap:8px;">
+            <select id="movie" style="flex:1; min-width:0;">
+              <option value="" disabled selected>Loading what's in theaters...</option>
+            </select>
+            <button class="locate-btn" id="loadMoviesBtn" type="button" style="flex-shrink:0; opacity:0.6; font-size:12px; padding:6px 10px;" title="Look up movies playing specifically at theaters near you -- for anything not in the list already, like a local/independent theater">Not seeing it?</button>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="deadline">Must end by</label>
+          <input type="time" id="deadline" value="22:00" />
+        </div>
+      </div>
+    </div>
+
+    <div class="row" id="windowFields" style="display:none;">
+      <div class="field">
+        <label for="availableFrom">Free from</label>
+        <input type="time" id="availableFrom" />
+      </div>
+      <div class="field">
+        <label for="availableForHours">For how long (hours)</label>
+        <input type="number" id="availableForHours" value="3" min="0.5" step="0.5" />
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="searchDate">Date</label>
+        <input type="date" id="searchDate" />
+      </div>
+      <div class="field">
+        <label for="radius">Within (minutes)</label>
+        <input type="number" id="radius" value="15" min="1" />
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field wide">
+        <label for="place">Location</label>
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="place" placeholder="Zip code or city, e.g. 92835 or Fullerton, CA" style="flex:1;" />
+          <button class="locate-btn" id="locateBtn" type="button">Use my location</button>
+        </div>
+      </div>
+    </div>
+    <!-- Set directly by "Use my location" (bypasses geocoding); left
+         empty otherwise, in which case the place text above is geocoded
+         server-side. -->
+    <input type="hidden" id="lat" />
+    <input type="hidden" id="lng" />
+
+    <label>Formats</label>
+    <div class="chips" id="formatChips">
+      <button class="chip on" data-format="standard">Standard</button>
+      <button class="chip on" data-format="3d">3D</button>
+      <button class="chip on" data-format="imax">IMAX</button>
+      <button class="chip on" data-format="dolby cinema">Dolby Cinema</button>
+      <button class="chip on" data-format="px rpx">RPX</button>
+      <button class="chip on" data-format="4dx">4DX</button>
+      <button class="chip on" data-format="recliner">Recliner</button>
+      <button class="chip on" data-format="lg led">LG LED</button>
+    </div>
+
+    <label>Chains</label>
+    <div class="chips" id="chainChips">
+      <button class="chip on" data-chain="amc">AMC</button>
+      <button class="chip on" data-chain="regal">Regal</button>
+      <button class="chip on" data-chain="cinemark">Cinemark</button>
+      <button class="chip on" data-chain="cinemawest">Cinema West</button>
+      <button class="chip on" data-chain="harkins">Harkins</button>
+      <button class="chip on" data-chain="regency">Regency</button>
+    </div>
+
+    <button class="search-btn" id="searchBtn" type="button">Find showtimes</button>
+
+    <div class="debug-toggle">
+      <input type="checkbox" id="debugToggle" />
+      <label for="debugToggle" style="margin:0; text-transform:none; letter-spacing:normal; font-size:12px;">Include raw debug output</label>
+    </div>
+  </div>
+
+  <div class="status-line" id="statusLine"></div>
+  <div id="banners"></div>
+  <div id="results"></div>
+  <details class="debug" id="debugPanel" style="display:none;">
+    <summary>Raw response</summary>
+    <pre id="debugOutput"></pre>
+  </details>
+</div>
+
+<script>
+  const els = {
+    modeMovieBtn: document.getElementById('modeMovieBtn'),
+    modeWindowBtn: document.getElementById('modeWindowBtn'),
+    specificMovieFields: document.getElementById('specificMovieFields'),
+    windowFields: document.getElementById('windowFields'),
+    availableFrom: document.getElementById('availableFrom'),
+    availableForHours: document.getElementById('availableForHours'),
+    movie: document.getElementById('movie'),
+    searchDate: document.getElementById('searchDate'),
+    radius: document.getElementById('radius'),
+    deadline: document.getElementById('deadline'),
+    lat: document.getElementById('lat'),
+    lng: document.getElementById('lng'),
+    place: document.getElementById('place'),
+    locateBtn: document.getElementById('locateBtn'),
+    loadMoviesBtn: document.getElementById('loadMoviesBtn'),
+    searchBtn: document.getElementById('searchBtn'),
+    debugToggle: document.getElementById('debugToggle'),
+    statusLine: document.getElementById('statusLine'),
+    banners: document.getElementById('banners'),
+    results: document.getElementById('results'),
+    debugPanel: document.getElementById('debugPanel'),
+    debugOutput: document.getElementById('debugOutput'),
+  };
+
+  let searchMode = 'movie'; // 'movie' | 'window'
+  function setMode(mode) {
+    searchMode = mode;
+    const isWindow = mode === 'window';
+    els.modeMovieBtn.classList.toggle('on', !isWindow);
+    els.modeWindowBtn.classList.toggle('on', isWindow);
+    els.specificMovieFields.style.display = isWindow ? 'none' : '';
+    els.windowFields.style.display = isWindow ? '' : 'none';
+    els.searchBtn.textContent = isWindow ? 'Find what fits' : 'Find showtimes';
+    els.banners.innerHTML = '';
+    els.results.innerHTML = '';
+    els.statusLine.textContent = '';
+  }
+  els.modeMovieBtn.addEventListener('click', () => setMode('movie'));
+  els.modeWindowBtn.addEventListener('click', () => setMode('window'));
+
+  // Restore last-used values so repeat searches don't require retyping
+  // everything -- this is a personal local tool, not a shared page.
+  const STORAGE_KEY = 'showtimeFinder.lastSearch';
+  // The movie field is a real <select>, so a saved title can't be applied
+  // directly until "Load nearby" actually populates matching <option>s.
+  // Remember it here and re-apply it once that happens.
+  let pendingMovieSelection = null;
+  function loadSaved() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      if (saved.movie) pendingMovieSelection = saved.movie;
+      if (saved.radius) els.radius.value = saved.radius;
+      if (saved.deadline) els.deadline.value = saved.deadline;
+      // Guard against restoring a stale "Current location (...)" label
+      // from an old session -- it's meaningless without the paired
+      // lat/lng, which is deliberately never persisted.
+      if (saved.place && !saved.place.startsWith('Current location')) {
+        els.place.value = saved.place;
+      }
+    } catch {}
+    // Date is deliberately NOT restored from localStorage -- always
+    // default to today on load, rather than silently reusing whatever
+    // date was last searched.
+    //
+    // CRITICAL: new Date().toISOString() is always UTC, not local time.
+    // Confirmed as a real live bug: after ~5pm Pacific, UTC has already
+    // rolled to the next calendar day, so this silently pre-filled the
+    // date picker with TOMORROW's date before the user touched anything
+    // -- then the server's (also-buggy, now fixed) deadline check saw a
+    // future-dated search and filtered out every real showing as
+    // "already started." Use local date components instead.
+    const todayLocal = new Date();
+    const todayISOLocal =
+      `${todayLocal.getFullYear()}-${String(todayLocal.getMonth() + 1).padStart(2, '0')}-${String(todayLocal.getDate()).padStart(2, '0')}`;
+    els.searchDate.value = todayISOLocal;
+    // Same reasoning for "free from" -- always default to right now.
+    const now = new Date();
+    const roundedMinutes = Math.ceil(now.getMinutes() / 5) * 5;
+    now.setMinutes(roundedMinutes, 0, 0);
+    els.availableFrom.value = now.toTimeString().slice(0, 5);
+  }
+  function saveCurrent() {
+    // Don't persist the geolocation placeholder text -- it's only
+    // meaningful paired with the (never-persisted) lat/lng that produced
+    // it, so saving it alone would just save a location that will fail
+    // to geocode next time.
+    const placeToSave = els.place.value.startsWith('Current location') ? '' : els.place.value;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      movie: els.movie.value,
+      radius: els.radius.value,
+      deadline: els.deadline.value,
+      place: placeToSave,
+    }));
+  }
+  loadSaved();
+
+  // Pre-load a location-independent list of what's currently in wide
+  // release, so picking a common movie doesn't require waiting on
+  // "Not seeing it?" (which needs a location filled in first, and
+  // costs a real SerpApi call per nearby theater) just to populate the
+  // dropdown. Runs automatically on page load, no button press needed.
+  (async () => {
+    try {
+      const res = await fetch('/api/popular-movies');
+      const data = await res.json();
+      if (res.ok && data.movies && data.movies.length) {
+        els.movie.innerHTML = data.movies.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+        if (pendingMovieSelection && data.movies.includes(pendingMovieSelection)) {
+          els.movie.value = pendingMovieSelection;
+          pendingMovieSelection = null;
+        }
+      } else {
+        els.movie.innerHTML = '<option value="" disabled selected>Fill in a location and press "Not seeing it?" to find movies</option>';
+      }
+    } catch {
+      els.movie.innerHTML = '<option value="" disabled selected>Fill in a location and press "Not seeing it?" to find movies</option>';
+    }
+  })();
+
+  // If the person edits the location text after using "Use my location",
+  // the old coordinates are almost certainly stale -- clear them so the
+  // next search geocodes the new text instead of silently using an old
+  // GPS fix that no longer matches what's displayed.
+  els.place.addEventListener('input', () => {
+    els.lat.value = '';
+    els.lng.value = '';
+  });
+
+  els.locateBtn.addEventListener('click', () => {
+    if (!navigator.geolocation) {
+      els.statusLine.textContent = "Geolocation isn't available in this browser -- enter a zip code or city instead.";
+      return;
+    }
+    els.locateBtn.disabled = true;
+    els.locateBtn.textContent = 'Locating...';
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        els.lat.value = pos.coords.latitude.toFixed(4);
+        els.lng.value = pos.coords.longitude.toFixed(4);
+        // Setting .value programmatically doesn't fire the 'input' event
+        // listener that clears lat/lng, so this is safe.
+        els.place.value = `Current location (${els.lat.value}, ${els.lng.value})`;
+        els.locateBtn.disabled = false;
+        els.locateBtn.textContent = 'Use my location';
+      },
+      (err) => {
+        els.statusLine.textContent = `Couldn't get your location: ${err.message}. Enter a zip code or city instead.`;
+        els.locateBtn.disabled = false;
+        els.locateBtn.textContent = 'Use my location';
+      }
+    );
+  });
+
+  document.querySelectorAll('.chip').forEach((chip) => {
+    chip.addEventListener('click', () => chip.classList.toggle('on'));
+  });
+
+  els.loadMoviesBtn.addEventListener('click', async () => {
+    const lat = els.lat.value.trim();
+    const lng = els.lng.value.trim();
+    const place = els.place.value.trim();
+    const radius = els.radius.value.trim();
+
+    if ((!lat || !lng) && !place) {
+      els.statusLine.textContent = 'Fill in a zip code or city first -- movie lookup needs to know where to look.';
+      return;
+    }
+    if (!radius) {
+      els.statusLine.textContent = 'Fill in a radius first.';
+      return;
+    }
+
+    els.loadMoviesBtn.disabled = true;
+    els.loadMoviesBtn.textContent = 'Loading...';
+    els.statusLine.textContent = "Checking what's actually playing nearby...";
+
+    try {
+      const params = new URLSearchParams({ radiusMin: radius, date: els.searchDate.value });
+      if (lat && lng) {
+        params.set('lat', lat);
+        params.set('lng', lng);
+      } else {
+        params.set('place', place);
+      }
+      const res = await fetch(`/api/movies?${params.toString()}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        els.statusLine.textContent = `Movie lookup failed: ${data.error || 'unknown error'}`;
+        return;
+      }
+
+      if (data.movies.length) {
+        // Merge with whatever's already loaded (the pre-loaded popular
+        // list, most likely) rather than replacing it -- this button is
+        // now specifically for "add what's missing," so wiping out
+        // options that were already there would be a regression.
+        const currentSelection = els.movie.value;
+        const existingTitles = new Set(
+          [...els.movie.options].map((o) => o.value).filter(Boolean)
+        );
+        const newTitles = data.movies.filter((m) => !existingTitles.has(m));
+        if (newTitles.length) {
+          els.movie.insertAdjacentHTML(
+            'beforeend',
+            newTitles.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')
+          );
+        }
+        // Re-apply a saved selection from a previous session if it's
+        // now among the loaded movies; otherwise keep whatever was
+        // already selected.
+        if (pendingMovieSelection && [...els.movie.options].some((o) => o.value === pendingMovieSelection)) {
+          els.movie.value = pendingMovieSelection;
+        } else if (currentSelection) {
+          els.movie.value = currentSelection;
+        }
+        pendingMovieSelection = null;
+      } else if (![...els.movie.options].some((o) => o.value)) {
+        // Only show "nothing found" if the dropdown is otherwise
+        // genuinely empty -- if the pre-loaded popular list already has
+        // options, this button coming back empty just means "nothing
+        // *extra* found," not "nothing at all."
+        els.movie.innerHTML = '<option value="" disabled selected>No movies found nearby</option>';
+      }
+      els.statusLine.textContent = data.movies.length
+        ? `Found ${data.movies.length} movie(s) playing across ${data.theatersChecked} nearby theater(s) -- pick one from the Movie dropdown.`
+        : `No theaters found in range, or nothing came back -- try widening the radius.`;
+    } catch (err) {
+      els.statusLine.textContent = `Couldn't reach the server for movie lookup: ${err.message}`;
+    } finally {
+      els.loadMoviesBtn.disabled = false;
+      els.loadMoviesBtn.textContent = 'Not seeing it?';
+    }
+  });
+
+  function fmtTime24to12(hhmmss) {
+    if (!hhmmss) return '';
+    const [h, m] = hhmmss.split(':').map(Number);
+    const hour12 = ((h + 11) % 12) + 1;
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    return `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+  }
+
+  function fmtRuntime(minutes) {
+    if (!minutes) return '';
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  async function runSearch() {
+    const movie = els.movie.value.trim();
+    const lat = els.lat.value.trim();
+    const lng = els.lng.value.trim();
+    const place = els.place.value.trim();
+    const radius = els.radius.value.trim();
+    const deadline = els.deadline.value.trim();
+
+    els.banners.innerHTML = '';
+    els.results.innerHTML = '';
+    els.debugPanel.style.display = 'none';
+    activeResultFormats = null; // fresh search -- reset to "all formats on"
+
+    if (!movie || ((!lat || !lng) && !place) || !radius || !deadline) {
+      els.banners.innerHTML = '<div class="banner error">Fill in movie, location, radius, and deadline before searching.</div>';
+      return;
+    }
+
+    saveCurrent();
+
+    const activeFormats = [...document.querySelectorAll('#formatChips .chip.on')].map((c) => c.dataset.format);
+    const activeChains = [...document.querySelectorAll('#chainChips .chip.on')].map((c) => c.dataset.chain);
+    const debug = els.debugToggle.checked;
+
+    const params = new URLSearchParams({
+      movie, radiusMin: radius, deadline,
+      date: els.searchDate.value,
+      formats: activeFormats.join(','),
+      chains: activeChains.join(','),
+    });
+    if (lat && lng) {
+      params.set('lat', lat);
+      params.set('lng', lng);
+    } else {
+      params.set('place', place);
+    }
+    if (debug) params.set('debug', 'true');
+
+    els.searchBtn.disabled = true;
+    els.searchBtn.textContent = 'Searching...';
+    els.statusLine.textContent = 'Checking nearby theaters...';
+
+    // Regal split out into its own request (see /api/search-regal) --
+    // its retry-with-delays logic can make it noticeably slower than
+    // every other chain, so it shouldn't hold up showing everything
+    // else. Only fire it if Regal's chain chip is actually on.
+    const wantsRegal = activeChains.includes('regal');
+    const regalParams = new URLSearchParams({
+      movie, radiusMin: radius, deadline,
+      date: els.searchDate.value,
+      formats: activeFormats.join(','),
+    });
+    if (lat && lng) {
+      regalParams.set('lat', lat);
+      regalParams.set('lng', lng);
+    } else {
+      regalParams.set('place', place);
+    }
+
+    const regalPromise = wantsRegal
+      ? fetch(`/api/search-regal?${regalParams.toString()}`).then((r) => r.json()).catch(() => null)
+      : Promise.resolve(null);
+
+    try {
+      const res = await fetch(`/api/search?${params.toString()}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        els.banners.innerHTML = `<div class="banner error">${data.error || 'Search failed'}${data.detail ? ' -- ' + data.detail : ''}</div>`;
+        els.statusLine.textContent = '';
+        return;
+      }
+
+      renderResults(data);
+
+      if (debug) {
+        els.debugPanel.style.display = 'block';
+        els.debugOutput.textContent = JSON.stringify(data, null, 2);
+      }
+
+      // Regal's results, if requested, merge in whenever they're ready --
+      // completely independent of whether the block above already
+      // rendered. A small "still checking" note shows in the meantime so
+      // it's clear more might still be coming, not that the search is
+      // simply done.
+      if (wantsRegal) {
+        const regalNote = document.createElement('div');
+        regalNote.className = 'banner';
+        regalNote.style.cssText = 'margin-top:8px; font-size:12px; color:#8a8478;';
+        regalNote.textContent = 'Still checking Regal...';
+        els.banners.appendChild(regalNote);
+
+        regalPromise.then((regalData) => {
+          regalNote.remove();
+          if (!regalData || !regalData.results || regalData.results.length === 0) return;
+
+          const merged = { ...lastRenderData, results: [...(lastRenderData.results || []), ...regalData.results] };
+          merged.results.sort((a, b) => {
+            const priceA = effectivePriceForSorting(a);
+            const priceB = effectivePriceForSorting(b);
+            if (priceA == null && priceB == null) return 0;
+            if (priceA == null) return 1;
+            if (priceB == null) return -1;
+            return priceA - priceB;
+          });
+          merged.matchingShowings = (merged.matchingShowings ?? merged.results.length) + regalData.results.length;
+          renderResults(merged, lastRenderOpts);
+        });
+      }
+    } catch (err) {
+      els.banners.innerHTML = `<div class="banner error">Couldn't reach the server. Is ./start.sh still running? (${err.message})</div>`;
+      els.statusLine.textContent = '';
+    } finally {
+      els.searchBtn.disabled = false;
+      els.searchBtn.textContent = searchMode === 'window' ? 'Find what fits' : 'Find showtimes';
+    }
+  }
+
+  async function runWindowSearch() {
+    const lat = els.lat.value.trim();
+    const lng = els.lng.value.trim();
+    const place = els.place.value.trim();
+    const radius = els.radius.value.trim();
+    const availableFrom = els.availableFrom.value.trim();
+    const hours = parseFloat(els.availableForHours.value);
+
+    els.banners.innerHTML = '';
+    els.results.innerHTML = '';
+    els.debugPanel.style.display = 'none';
+    activeResultFormats = null; // fresh search -- reset to "all formats on"
+
+    if (((!lat || !lng) && !place) || !radius || !availableFrom || !hours) {
+      els.banners.innerHTML = '<div class="banner error">Fill in location, radius, "free from" time, and how many hours before searching.</div>';
+      return;
+    }
+
+    saveCurrent();
+
+    // Compute an explicit end clock time from "free from" + duration --
+    // the backend takes two clock times, not a duration, and this keeps
+    // that contract simple. Doesn't handle crossing midnight (see the
+    // matching note in server.js).
+    const [fromH, fromM] = availableFrom.split(':').map(Number);
+    const totalMinutes = fromH * 60 + fromM + Math.round(hours * 60);
+    const untilH = Math.floor(totalMinutes / 60) % 24;
+    const untilM = totalMinutes % 60;
+    const availableUntil = `${String(untilH).padStart(2, '0')}:${String(untilM).padStart(2, '0')}`;
+
+    if (totalMinutes >= 24 * 60) {
+      els.banners.innerHTML = '<div class="banner error">That window runs past midnight, which isn\'t supported yet -- try a shorter duration or a later start time.</div>';
+      return;
+    }
+
+    const activeFormats = [...document.querySelectorAll('#formatChips .chip.on')].map((c) => c.dataset.format);
+    const activeChains = [...document.querySelectorAll('#chainChips .chip.on')].map((c) => c.dataset.chain);
+    const debug = els.debugToggle.checked;
+
+    const params = new URLSearchParams({
+      radiusMin: radius,
+      availableFrom,
+      availableUntil,
+      date: els.searchDate.value,
+      formats: activeFormats.join(','),
+      chains: activeChains.join(','),
+    });
+    if (lat && lng) {
+      params.set('lat', lat);
+      params.set('lng', lng);
+    } else {
+      params.set('place', place);
+    }
+
+    els.searchBtn.disabled = true;
+    els.searchBtn.textContent = 'Searching...';
+    els.statusLine.textContent = 'Checking what fits nearby...';
+
+    try {
+      const res = await fetch(`/api/window-search?${params.toString()}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        els.banners.innerHTML = `<div class="banner error">${data.error || 'Search failed'}${data.detail ? ' -- ' + data.detail : ''}</div>`;
+        els.statusLine.textContent = '';
+        return;
+      }
+
+      renderResults(data, { showMovieName: true });
+
+      if (debug) {
+        els.debugPanel.style.display = 'block';
+        els.debugOutput.textContent = JSON.stringify(data, null, 2);
+      }
+    } catch (err) {
+      els.banners.innerHTML = `<div class="banner error">Couldn't reach the server. Is ./start.sh still running? (${err.message})</div>`;
+      els.statusLine.textContent = '';
+    } finally {
+      els.searchBtn.disabled = false;
+      els.searchBtn.textContent = 'Find what fits';
+    }
+  }
+
+  // Format filter state -- persists across re-renders triggered by
+  // clicking a chip (so toggling doesn't lose your other selections),
+  // but gets reset to "all on" whenever a genuinely new search runs
+  // (see the reset calls in runSearch/runWindowSearch).
+  let activeResultFormats = null; // null = not yet initialized for this result set
+
+  // Sort mode for the already-rendered result set -- purely client-side,
+  // same instant-no-refetch pattern as the format filter above, since
+  // every result already carries distanceMin from the server and price
+  // sorting was already happening server-side. "Cheapest" price and
+  // "closest" distance are independent orderings of the same data, not
+  // something that needs a new search.
+  let resultSortMode = 'price'; // 'price' | 'distance'
+
+  function buildCardHtml(r, isBest, opts) {
+    // Field name differs by chain: AMC/Regal set estimatedFee (a guess,
+    // since neither's real data exposes an exact fee), Cinemark/Cinema
+    // West set fee (confirmed real, straight from the same per-showing
+    // data as the price itself). Check both.
+    const fee = r.fee ?? r.estimatedFee;
+    const hasBreakdown = r.priceBeforeFee != null && fee != null;
+    const feeIsEstimated = r.feeStatus === "estimated";
+
+    function formatMoneyRange(low, high) {
+      const lowStr = `$${low.toFixed(2)}`;
+      const highStr = `$${high.toFixed(2)}`;
+      return lowStr === highStr ? lowStr : `${lowStr}-${highStr}`;
+    }
+
+    const priceHtml = r.price != null
+      ? `<span class="price">$${r.price.toFixed(2)}</span>` +
+        (hasBreakdown
+          ? `<div class="price-breakdown">$${r.priceBeforeFee.toFixed(2)} ticket + $${fee.toFixed(2)} fee${feeIsEstimated ? ' (est.)' : ''}</div>`
+          : '') +
+        (r.amcStubsDiscountPriceInPersonLow != null
+          ? `<div class="stubs-stub" title="${escapeHtml(r.amcStubsDiscountNote || '')}">
+               <span class="stubs-eyebrow">Stubs Tue/Wed</span>
+               <span class="stubs-price-main">~${formatMoneyRange(r.amcStubsDiscountPriceInPersonLow, r.amcStubsDiscountPriceInPersonHigh)}</span><span class="stubs-price-caption">in-person</span>
+               <div class="stubs-price-online">~${formatMoneyRange(r.amcStubsDiscountPriceOnlineLow, r.amcStubsDiscountPriceOnlineHigh)} online</div>
+             </div>`
+          : '') +
+        (r.regencyTuesdayPrice != null
+          ? `<div class="stubs-stub" title="${escapeHtml(r.regencyTuesdayNote || '')}">
+               <span class="stubs-eyebrow">Tuesday Flat Rate</span><br/>
+               <span class="stubs-price-main">$${r.regencyTuesdayPrice.toFixed(2)}</span>
+             </div>`
+          : '')
+      : `<span class="price unknown">Check<br/>theater</span>`;
+    return `
+      <div class="card ${isBest ? 'best' : ''}">
+        <div class="price-col">
+          ${priceHtml}
+          ${isBest ? '<span class="best-tag">Cheapest</span>' : ''}
+        </div>
+        <div class="card-body">
+          <div class="card-top">
+            <span class="theater-name">${escapeHtml(r.theaterName)}</span>
+            <span class="dist">${r.distanceMin} min away</span>
+          </div>
+          ${opts.showMovieName ? `<div class="movie-name" style="font-weight:600; margin-bottom:2px;">${escapeHtml(r.movieName)}${r.runtimeMinutes ? ` <span style="font-weight:400; color:#888; font-size:12px;">(${r.runtimeMinutes} min)</span>` : ''}</div>` : ''}
+          <div class="time-large">${fmtTime24to12FromRaw(r.startTime)}</div>
+          ${(r.filmActuallyStartsAt || r.estimatedEndTime) ? `<div class="time-sub">${r.filmActuallyStartsAt ? `Skip trailers, arrive ${escapeHtml(r.filmActuallyStartsAt)}` : ''}${r.filmActuallyStartsAt && r.estimatedEndTime ? ' &middot; ' : ''}${r.estimatedEndTime ? `Done by ${escapeHtml(r.estimatedEndTime)}` : ''}</div>` : ''}
+          <div class="meta">
+            <span class="format-badge">${escapeHtml(r.format)}</span>
+            ${r.ticketTypeName ? `<span class="format-badge" style="opacity:0.75;" title="This chain's own real ticket tier for this exact showing, not a guessed rule">${escapeHtml(r.ticketTypeName)}</span>` : ''}
+          </div>
+          ${r.bookingLink ? `<a class="card-link" href="${r.bookingLink}" target="_blank" rel="noopener">Check showtime / tickets &rarr;</a>` : ''}
+          ${r.priceSource ? `<div class="price-source">Price source: ${escapeHtml(r.priceSource)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  function toggleResultFormat(format) {
+    if (activeResultFormats.has(format)) {
+      activeResultFormats.delete(format);
+    } else {
+      activeResultFormats.add(format);
+    }
+    renderResults(lastRenderData, lastRenderOpts);
+  }
+  window.toggleResultFormat = toggleResultFormat; // reachable from inline onclick handlers below
+
+  function setResultSortMode(mode) {
+    if (resultSortMode === mode) return;
+    resultSortMode = mode;
+    renderResults(lastRenderData, lastRenderOpts);
+  }
+  window.setResultSortMode = setResultSortMode; // reachable from inline onclick handlers below
+
+  let lastRenderData = null;
+  let lastRenderOpts = null;
+
+  // Mirrors the server-side sorting logic in server.js -- needed here
+  // specifically for re-sorting after Regal's results merge in
+  // separately, since the merged array isn't re-sorted server-side.
+  function effectivePriceForSorting(r) {
+    if (r.amcStubsDiscountPriceOnlineHigh != null) return r.amcStubsDiscountPriceOnlineHigh;
+    if (r.regencyTuesdayPrice != null) return r.regencyTuesdayPrice;
+    return r.price;
+  }
+
+  function renderResults(data, opts = {}) {
+    lastRenderData = data;
+    lastRenderOpts = opts;
+
+    const banners = [];
+    if (data.warning) banners.push(`<div class="banner warn">${data.warning}</div>`);
+    if (data.note) banners.push(`<div class="banner warn">${data.note}</div>`);
+    if (data.locationResolutionError) {
+      banners.push(`<div class="banner warn">Location lookup: ${data.locationResolutionError}</div>`);
+    }
+    els.banners.innerHTML = banners.join('');
+
+    const allResults = data.results || [];
+    const allFormats = [...new Set(allResults.map((r) => r.format).filter(Boolean))];
+    if (activeResultFormats === null) {
+      activeResultFormats = new Set(allFormats); // default: everything on
+    }
+
+    const results = allResults.filter((r) => activeResultFormats.has(r.format));
+
+    const priced = results.filter((r) => r.price != null).length;
+    const totalFound = data.matchingShowings ?? allResults.length;
+    const wasCapped = totalFound > allResults.length;
+    const countLabel = wasCapped
+      ? `<b>${results.length}</b> of <b>${totalFound}</b> showings`
+      : `<b>${results.length}</b> showing${results.length === 1 ? '' : 's'}`;
+
+    const subjectLabel = opts.showMovieName
+      ? `movies that fit between <b>${fmtTime24to12(data.availableFrom)}</b> and <b>${fmtTime24to12(data.availableUntil)}</b>`
+      : `of <b>${data.movie}</b>`;
+
+    // Only meaningful for a single-movie search -- window-search mode
+    // mixes many different movies with their own separate runtimes, so
+    // there's no one number to show there.
+    const runtimeLabel = !opts.showMovieName && data.runtimeMinutes
+      ? ` <span style="color:var(--ink-dim); font-weight:400;">(${fmtRuntime(data.runtimeMinutes)})</span>`
+      : '';
+
+    els.statusLine.innerHTML = allResults.length
+      ? `${countLabel} ${subjectLabel}${runtimeLabel} on <b>${data.searchDate || '?'}</b> (${priced} priced). Location resolved to: ${data.locationResolved || '(n/a)'}`
+      : `No ${opts.showMovieName ? 'movies fit that window' : `showings of <b>${data.movie}</b>${runtimeLabel} found within your window`} on <b>${data.searchDate || '?'}</b>. Location resolved to: ${data.locationResolved || '(n/a)'}`;
+
+    // Stinger info only makes sense for a single specific movie, not the
+    // "3 hours to kill" mode (which mixes many different movies) -- and
+    // only worth showing at all when MediaStinger actually had info,
+    // since "we don't know" isn't useful to surface every time.
+    const stinger = data.mediaStinger;
+    if (!opts.showMovieName && stinger && stinger.hasInfo) {
+      const verdictHtml = stinger.verdict === 'STAY'
+        ? `Is there something worth watching during or after the credits? <span style="color:#2a7a2a; font-weight:700;">Yes, you should STAY</span>`
+        : stinger.verdict === 'LEAVE'
+          ? `Is there something worth watching during or after the credits? <span style="color:#888; font-weight:700;">No, you should LEAVE</span>`
+          : `<span style="font-weight:700;">Stinger info available</span>`;
+
+      // Only worth revealing anything when there's actually something to
+      // stay for -- for a LEAVE verdict (confirmed no stinger), the
+      // during/after text is just "there's nothing here," which isn't
+      // worth a spoiler-hidden reveal at all. Just the verdict and a
+      // link to the full page.
+      const hasSpoilerText = stinger.verdict === 'STAY' && (stinger.afterCredits || stinger.duringCredits);
+      const spoilerHtml = hasSpoilerText
+        ? `<details style="margin-top:6px;">
+             <summary style="cursor:pointer; color:#7a6a30; font-size:13px;">Click to see what happens</summary>
+             <div style="margin-top:6px; font-size:13px;">
+               ${stinger.duringCredits ? `<div><b>During credits:</b> ${escapeHtml(stinger.duringCredits)}</div>` : ''}
+               ${stinger.afterCredits ? `<div style="margin-top:4px;"><b>After credits:</b> ${escapeHtml(stinger.afterCredits)}</div>` : ''}
+             </div>
+           </details>`
+        : '';
+
+      const ratingHtml = stinger.communityRating != null
+        ? ` <span style="color:#888; font-size:12px;">(community: ${stinger.communityRating > 0 ? '+' : ''}${stinger.communityRating})</span>`
+        : '';
+      const linkHtml = stinger.pageUrl
+        ? ` <a href="${stinger.pageUrl}" target="_blank" rel="noopener" style="font-size:12px; white-space:nowrap;">Full details &rarr;</a>`
+        : '';
+
+      els.statusLine.innerHTML += `<div class="banner" style="margin-top:8px; background:#fff8e6; border:1px solid #f0dca0;">🍿 ${verdictHtml}${ratingHtml}${linkHtml}${spoilerHtml}</div>`;
+    }
+
+    if (allResults.length === 0) {
+      const emptyMsg = opts.showMovieName
+        ? 'Nothing fits that exact window -- try a longer duration, a wider radius, or a different start time.'
+        : 'Nothing fits that window right now -- try widening the radius, pushing the deadline later, or double-checking the movie title.';
+      els.results.innerHTML = `<div class="empty">${emptyMsg}</div>`;
+      return;
+    }
+
+    // Instant client-side format filter -- toggles which of the already-
+    // fetched results are shown, no re-search. Only rendered when there's
+    // more than one distinct format to actually choose between.
+    const filterChipsHtml = allFormats.length > 1
+      ? `<div class="chips" style="margin-bottom:12px;">${allFormats.map((f) => {
+          const on = activeResultFormats.has(f);
+          return `<button class="chip ${on ? 'on' : ''}" onclick="toggleResultFormat(${JSON.stringify(f).replace(/"/g, '&quot;')})">${escapeHtml(f)}</button>`;
+        }).join('')}</div>`
+      : '';
+
+    // Sort toggle -- always rendered (unlike the format chips, which
+    // only show up when there's more than one format to choose from),
+    // since distance-vs-price is a meaningful choice regardless of how
+    // many formats are in the result set. Uses .sort-toggle, NOT
+    // .chips/.chip -- see the CSS comment above .sort-toggle for why
+    // this needed a visually distinct control rather than matching the
+    // format/chain filter chips.
+    const sortToggleHtml = `<div style="margin-bottom:12px;">
+      <span style="font-size:11px; color:var(--ink-dim); margin-right:8px; vertical-align:middle;">Sort:</span>
+      <div class="sort-toggle">
+        <button class="${resultSortMode === 'price' ? 'on' : ''}" onclick="setResultSortMode('price')">Cheapest first</button>
+        <button class="${resultSortMode === 'distance' ? 'on' : ''}" onclick="setResultSortMode('distance')">Closest first</button>
+      </div>
+    </div>`;
+
+    if (results.length === 0) {
+      els.results.innerHTML = filterChipsHtml + sortToggleHtml + '<div class="empty">No showings match the selected format(s) -- try enabling more above.</div>';
+      return;
+    }
+
+    // Server already sorts by price, but distance mode needs its own
+    // ordering -- sorting a COPY here rather than the shared `results`
+    // array, since that array is also used just above (and would be,
+    // in future changes) for counts/filters that shouldn't silently
+    // depend on which sort mode happens to be active.
+    const displayResults = resultSortMode === 'distance'
+      ? [...results].sort((a, b) => {
+          const da = a.distanceMin, db = b.distanceMin;
+          if (da == null && db == null) return 0;
+          if (da == null) return 1;
+          if (db == null) return -1;
+          return da - db;
+        })
+      : results;
+
+    // The "Cheapest" tag has to identify the true cheapest result by
+    // PRICE, regardless of what order it's currently being displayed
+    // in -- findIndex on the first priced entry only worked because
+    // results used to always arrive price-sorted from the server. Once
+    // distance mode can reorder the same array, that assumption breaks,
+    // so find the minimum explicitly instead of relying on order.
+    let cheapestResult = null;
+    for (const r of displayResults) {
+      if (r.price == null) continue;
+      if (cheapestResult == null || r.price < cheapestResult.price) cheapestResult = r;
+    }
+
+    els.results.innerHTML = filterChipsHtml + sortToggleHtml + `<div class="list">${displayResults.map((r) =>
+      buildCardHtml(r, r === cheapestResult, opts)
+    ).join('')}</div>`;
+  }
+
+  // startTime from the API is already a 12-hour string like "7:00pm" in
+  // most cases (SerpApi's format) -- pass through as-is, just tidy casing.
+  function fmtTime24to12FromRaw(t) {
+    if (!t) return '';
+    return t.replace(/am|pm/i, (m) => m.toUpperCase());
+  }
+
+  function truncate(str, maxLen) {
+    if (!str || str.length <= maxLen) return str;
+    return str.slice(0, maxLen).trim() + '...';
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str ?? '';
+    return div.innerHTML;
+  }
+
+  function runCurrentModeSearch() {
+    return searchMode === 'window' ? runWindowSearch() : runSearch();
+  }
+
+  els.searchBtn.addEventListener('click', runCurrentModeSearch);
+  [els.movie, els.place, els.availableFrom, els.availableForHours].forEach((el) => {
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') runCurrentModeSearch(); });
+  });
+</script>
+</body>
+</html>
