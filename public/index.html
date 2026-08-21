@@ -65,6 +65,12 @@
 
   .field { flex: 1 1 160px; min-width: 130px; }
   .field.wide { flex-basis: 260px; }
+  /* min-width: 0 overrides the flex default (min-width: auto), which
+     otherwise lets a child's intrinsic content size win over its own
+     width: 100% -- iOS Safari's native time-input wheel has exactly that
+     kind of intrinsic minimum, and without this it pushes the field
+     wider than the row/card around it instead of shrinking to fit. */
+  .field.field-time { min-width: 0; }
 
   label {
     display: block;
@@ -357,7 +363,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.1</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.2</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -379,7 +385,7 @@
         </div>
       </div>
       <div class="row">
-        <div class="field">
+        <div class="field field-time">
           <label for="deadline">Must end by</label>
           <input type="time" id="deadline" value="22:00" />
         </div>
@@ -387,7 +393,7 @@
     </div>
 
     <div class="row" id="windowFields" style="display:none;">
-      <div class="field">
+      <div class="field field-time">
         <label for="availableFrom">Free from</label>
         <input type="time" id="availableFrom" />
       </div>

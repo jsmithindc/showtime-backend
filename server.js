@@ -33,6 +33,15 @@ const { getStingerInfo, getInTheatersList } = require("./lib/mediaStinger");
 
 const app = express();
 
+// Render (and most hosting platforms) sit behind a reverse proxy --
+// without this, req.ip returns the PROXY's address for every request,
+// not the real visitor's. That would make the rate limiter below
+// treat every visitor as the same single "IP", so 20 real searches
+// from ANYONE would exhaust the shared count and lock out the whole
+// app for the rest of the day. Only matters once actually deployed
+// behind a real reverse proxy; harmless locally.
+app.set("trust proxy", true);
+
 // Simple shared-password gate -- only active when APP_PASSWORD is set in
 // start.sh. Deliberately opt-in: running locally at localhost:3000 with
 // no password set works exactly as before, no login prompt. Only matters
@@ -62,6 +71,46 @@ if (APP_PASSWORD) {
   console.error("APP_PASSWORD is set -- this instance requires a password to access.");
 } else {
   console.error("APP_PASSWORD is not set -- running with no login gate (fine for localhost-only use).");
+}
+
+// Alternative/complementary protection to the password gate: a per-IP
+// daily cap on the actual credit-costing endpoints (search, movies,
+// window-search, search-regal -- the ones that call SerpApi, AMC,
+// Cinemark, Harkins, Regency, or any Regal proxy provider). Rather than
+// blocking access entirely like the password does, this lets anyone in
+// but bounds how much any single visitor -- stranger or not -- can
+// actually cost. Meant to replace the password for "friction-free for
+// me, capped risk if the URL ever leaks" rather than as a second lock
+// on top of it, though both work fine together.
+//
+// In-memory, resets on every restart/redeploy -- same tradeoff as this
+// app's other in-memory caches (SerpApi schedule cache, MediaStinger's
+// in-theaters cache). Not a real concern given how infrequently this
+// app actually redeploys.
+const SEARCH_RATE_LIMIT_PER_DAY = Number(process.env.SEARCH_RATE_LIMIT_PER_DAY) || 20;
+const RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const searchCountsByIp = new Map();
+
+function searchRateLimiter(req, res, next) {
+  const ip = req.ip || "unknown";
+  const now = Date.now();
+  const existing = searchCountsByIp.get(ip);
+
+  if (!existing || now - existing.windowStart > RATE_LIMIT_WINDOW_MS) {
+    searchCountsByIp.set(ip, { count: 1, windowStart: now });
+    return next();
+  }
+
+  if (existing.count >= SEARCH_RATE_LIMIT_PER_DAY) {
+    const resetInMinutes = Math.ceil((RATE_LIMIT_WINDOW_MS - (now - existing.windowStart)) / 60000);
+    console.error(`Rate limit hit for ${ip} -- ${existing.count} searches in the last 24h, resets in ~${resetInMinutes} min.`);
+    return res.status(429).json({
+      error: `You've hit the daily search limit (${SEARCH_RATE_LIMIT_PER_DAY}/day). Try again in about ${resetInMinutes} minutes.`,
+    });
+  }
+
+  existing.count += 1;
+  next();
 }
 
 app.use(express.static("public"));
@@ -415,7 +464,7 @@ function todayISOLocal() {
   return `${year}-${month}-${day}`;
 }
 
-app.get("/api/search", async (req, res) => {
+app.get("/api/search", searchRateLimiter, async (req, res) => {
   const { movie, radiusMin, deadline, formats, chains, date, debug, debugSerpApi } = req.query;
   let { lat, lng, location, place } = req.query;
 
@@ -1500,17 +1549,24 @@ app.get("/api/search", async (req, res) => {
             }
 
             // lat/lon: also confirmed required (the real client always
-            // sends real geolocation). Using the theater's own
-            // coordinates as a stand-in -- untested against a real
-            // response, but strictly closer to reality than 0/0.
+            // sends real geolocation) -- master.js's own
+            // getCustLatLng()/locationSuccessInit() flow populates this
+            // from the CUSTOMER's browser geolocation, not the theater's
+            // coordinates. This backend has no browser to ask, but the
+            // searcher's own originLat/originLng (the lat/lng this
+            // search was run against) is the direct equivalent -- a real
+            // customer position, not a stand-in for one. Previously this
+            // sent theater.lat/theater.lng instead, which was strictly
+            // closer to reality than 0/0 but not what the real client
+            // actually sends.
             const allPerformances = await getRegencyShowtimesForLocation({
               chain,
               site,
               dateISO: searchDateISO,
               seatsSiteId,
               filmId,
-              lat: theater.lat,
-              lon: theater.lng,
+              lat: originLat,
+              lon: originLng,
             });
             const movieMatches = allPerformances.filter((p) => p.movieTitle && matchesMovie(p.movieTitle, movie));
 
@@ -1883,7 +1939,7 @@ app.get("/api/popular-movies", async (req, res) => {
   }
 });
 
-app.get("/api/movies", async (req, res) => {
+app.get("/api/movies", searchRateLimiter, async (req, res) => {
   const { radiusMin, date } = req.query;
   let { lat, lng, location, place } = req.query;
 
@@ -2014,7 +2070,7 @@ app.get("/api/movies", async (req, res) => {
 // (geocoding, theater discovery, runtime lookup) rather than sharing
 // code with the main handler, to avoid any risk of destabilizing the
 // working main endpoint while extracting this.
-app.get("/api/search-regal", async (req, res) => {
+app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
   const { movie, radiusMin, deadline, formats, date } = req.query;
   let { lat, lng, location, place } = req.query;
 
@@ -2253,7 +2309,7 @@ app.get("/api/search-regal", async (req, res) => {
   }
 });
 
-app.get("/api/window-search", async (req, res) => {
+app.get("/api/window-search", searchRateLimiter, async (req, res) => {
   const { radiusMin, date, availableFrom, availableUntil, formats } = req.query;
   let { lat, lng, location, place } = req.query;
 

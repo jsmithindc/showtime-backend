@@ -1,0 +1,135 @@
+# Showtime Finder — backend
+
+## What this is
+
+A Node/Express backend (`server.js`, single file, ~2500 lines) that searches
+for movie showtimes near a lat/lng within a time budget, and where possible
+attaches *real* ticket prices per showing rather than just a generic
+Google/SerpApi listing.
+
+Flow, roughly:
+
+1. **Theater discovery** — OpenStreetMap Overpass API finds cinemas within
+   a radius (converted from `radiusMin` minutes with a 25% pad).
+2. **Showtimes + pricing**:
+   - Chains with a live direct adapter (AMC, Cinemark, Cinema West, Harkins,
+     Regency, Regal) go through `lib/priceAdapters/*-official.js` (or
+     `regal-scrapedo.js` for Regal) for real per-ticket-type pricing.
+   - Everything else falls back to SerpApi's Google-showtimes scrape
+     (`lib/priceAdapters/serpapi.js`) — price not always present there.
+3. **Local filtering** — drop showings that already started, end past
+   `deadline`, or don't match the requested `formats`; sort cheapest first.
+
+`public/index.html` is the (single-file) frontend.
+
+**The root [README.md](README.md) is stale as of its own last section** —
+everything above "Deploying (Railway)" describes an earlier SerpApi-only
+version and predates AMC/Regal/Harkins/Cinemark/Cinema West/Regency all
+being live adapters. Don't trust it as current documentation; this file is.
+
+## The proxy fallback chain (Regal pricing only)
+
+Regal's real backend (regmovies.com) is Cloudflare-protected and US-geo-
+restricted, so `lib/priceAdapters/regal-scrapedo.js` reaches it through
+`lib/proxyProviders/` instead of fetching directly. `lib/proxyProviders/index.js`
+tries configured providers in this order, falling through to the next on
+quota-exhaustion or failure:
+
+1. **Bright Data** — first because it's the architecturally strongest fit:
+   its documented schema has explicit `method`/`data` fields for relaying an
+   arbitrary request (including Regal's POST-based `createOrder` step),
+   confirmed from Bright Data's own docs, a GitHub reference impl, and an
+   independent OpenAPI spec. Should also be faster than apify-cfbypass since
+   it doesn't spin up a real browser per call. Caveat: real credentials are
+   confirmed to work against Bright Data's *own* test endpoint, but
+   `createOrder` against Regal specifically, and whether the outer response's
+   status code faithfully reflects the target's real status, are **not**
+   yet confirmed — see the long comment in `brightdata.js`.
+2. **apify-cfbypass** — second because it's the one provider *confirmed*,
+   from a real captured response, to get through Regal's `createOrder` step
+   end-to-end (via a browser-session workaround, since it has no native
+   POST-body relay). Catches the request if Bright Data can't do it or gets
+   the status-passthrough subtly wrong.
+3. **Firecrawl** — still real and usable for GET-only steps, but **cannot
+   handle `createOrder` at all** (no method/body relay), so it can never be
+   the *only* working provider for Regal even when it works for everything
+   else. See the long comment in `firecrawl.js`.
+4. **ZenRows** — last-but-kept: genuinely exhausted for the month as of the
+   last check, not removed outright in case a trickle of credits appears
+   (e.g. a free-tier monthly reset).
+5. **Scrape.do** — same situation as ZenRows; also the original/first
+   provider this project was built against (hence `regal-scrapedo.js`'s
+   filename, even though it now routes through whichever provider is next
+   in line).
+
+Apify's plain Super Scraper actor (`apify.js`, distinct from
+`apify-cfbypass.js`) is **removed from the list entirely**, not just
+deprioritized — confirmed blocked by Regal's bot detection (real 403s in
+the actor's own log). Don't re-add it without new evidence it's unblocked.
+
+Before touching this chain: re-read the ordering comment at the top of
+`lib/proxyProviders/index.js` — it's kept current and is the source of
+truth over this summary if the two ever disagree.
+
+## Theater chain adapters
+
+| Chain | File | State |
+|---|---|---|
+| **AMC** | `priceAdapters/amc-official.js` | Most solid. Official open developer API (`developers.amctheatres.com`), no special approval needed. Showtimes response includes real adult/child/senior pricing directly — no session/cart dance. One request per theater per day. |
+| **Cinemark** | `priceAdapters/cinemark-official.js` | Pricing confirmed against a real decoded sample (Century DOCO/XD, Sacramento) with Cinemark support's permission for personal/hobbyist use, but the actual live HTTP request has **never been run** — this sandbox can't reach cinemark.com (robots.txt + no egress). Pulls pricing from a base64 JSON blob (`rawBoxProducts`) embedded in the TicketSeatMap page HTML, not a JSON API. Gate: `DISABLE_CINEMARK_PRICING` env var, default paused-when-unset (checked via `!== "false"`, so it must be the literal string `"false"` to enable). Watch for HTML-entity-encoded `&amp;` in showtime links — must decode before parsing query params or theaterId/showtimeId parsing breaks. |
+| **Regal** | `priceAdapters/regal-scrapedo.js` | Real backend flow (create order → `getTicketsForSession`) reached through the proxy chain above. Response sometimes arrives as rendered HTML with the real JSON sitting in a `<pre>` tag (Scrape.do-specific quirk, unconfirmed whether other providers wrap it the same way) — falls back to direct `JSON.parse` if no `<pre>` found. Only theaters listed in `lib/regal-cinema-map.js`/`lib/regal-theaters-ca.js` get resolved; matching an unmapped OSM theater to a Regal ID now **requires "regal" in the OSM name** before even attempting a distance match (see Gotchas below). Gate: `DISABLE_REGAL_PRICING`. |
+| **Harkins** | `priceAdapters/harkins-official.js` | Discovery (movie catalog + nationwide showtimes-by-date via a Next.js data route) is fully confirmed live. **Real ticket pricing is still unconfirmed** — only one fully-captured pricing response exists (`RequestOrderTotals`), but not the shape of the step before it (`StartTicketingSession`) that actually creates the order. Needs one more real captured response before pricing can be trusted rather than guessed. Runs on the same Vista-family platform as Cinema West (shared `HO########` movie ID convention) but a different product stack (harkins.com + `ticketingservice.harkins.com` + `cmsservice.harkins.com`). The Next.js `{buildId}` in its data-route URL is **not stable** — changes on every site deploy, must be extracted live from the page's own `__NEXT_DATA__`, never hardcoded. |
+| **Regency** | `priceAdapters/regency-official.js` | Runs on "Mobile Moviegoing," a plain PHP platform — genuinely different stack from the Vista-family chains (Regal/Cinema West/Harkins). Pricing (`getSeatData.php` → `ticketClassArray`) is confirmed live, but requires already knowing a `perf` (performance) ID — **there is still no confirmed discovery endpoint** for finding performance IDs from a movie/theater/date; the showtimes listing is presumed server-rendered into theater/movie page HTML rather than a separate API, but a direct page fetch got a 405 from this project's sandbox. Ticket-type naming is unusual: types are named after the day ("Tuesday") rather than "Adult"; filter by excluding `bonus: true` (loyalty tier) rather than by age-keyword. Requires per-theater cookies (`visitID`, `hasSeenPopup`, `siteID` matching the specific theater's `seatsSiteId`) — a bare/static cookie silently gets "Error loading showtimes." with no other error signal. |
+
+(Cinema West also has a live adapter, `cinemawest-official.js`, not
+requested above but present in `server.js` under `chain: "cinemawest"`.)
+
+## Known gotchas before touching related code
+
+- **`start.sh` must never be git-tracked.** It has real, hardcoded API keys
+  (SerpApi, Scrape.do, ZenRows, Apify, Firecrawl, Bright Data, AMC vendor
+  key). `start.sh.example` is the safe, placeholder-only template — copy it
+  to `start.sh` for local dev, never edit `start.sh.example` with real
+  values. **There is currently no `.gitignore` file in this repo** despite
+  the commit history (`d5ecec2`) claiming start.sh "is now gitignored" —
+  it's untracked today only because it's never been `git add`ed, not
+  because anything prevents it. A bare `git add -A` or `git add .` would
+  stage it and leak every credential above. Treat this as standing
+  first-priority cleanup: add a `.gitignore` with `start.sh` (and
+  `node_modules/`) in it before relying on habit alone.
+- **Distance-only theater matching is fragile in dense areas.** Both the
+  Regal and AMC auto-match logic (matching an unmapped OSM theater to a
+  known chain-ID list purely by lat/lng proximity) previously mismatched
+  real theaters — e.g. "Laemmle Glendale" (a separate art-house chain) and
+  a defunct "Five Star Cinema" both got wrongly paired with an unrelated AMC
+  theater in a dense shopping district, purely from being within the 0.3mi
+  threshold. Fixed by requiring the chain's own name (`/\bamc\b/i`,
+  `/\bregal\b/i`) appear in the OSM theater's name before attempting a
+  distance match at all — do not remove that guard or loosen the distance
+  threshold without re-checking against that failure mode. Regal's 2-mile
+  radius ("city-level estimate") is a wider net than AMC's 0.3mi, so it's
+  if anything *more* exposed to false positives, not less.
+- **Google/SerpApi and Cinemark format strings need normalizing before use
+  as filter-chip keys**, or you get visually-duplicate chips for the same
+  real format (e.g. "Standard" vs "Standard Format", or "D-BOX" vs "D-Box"
+  from different theaters in the same response). See
+  `cinemarkDisplayFormat()`/`harkinsDisplayFormat()` in `server.js` — fix
+  normalization at the source (where the value is produced/parsed), not
+  just in frontend chip-generation, since result cards still need to match
+  whichever chip is active regardless of a given theater's raw casing.
+- **`DISABLE_CINEMARK_PRICING` / `DISABLE_REGAL_PRICING` are inverted-default
+  checks** (`!== "false"`): pricing is paused unless the env var is the
+  literal string `"false"`. Unset, `"true"`, or any typo all mean "paused."
+- **Runtime is not looked up live in the legacy SerpApi path** — see the
+  `RUNTIME_MIN` constant / `lib/movie-runtime.js` overrides. Confirm which
+  code path (official adapter vs. SerpApi fallback) a given theater is
+  actually using before assuming runtime is accurate.
+- **Several adapters (Cinemark, Regency's discovery step) have never had a
+  live HTTP request executed from this working environment** — network
+  egress here doesn't reach cinemark.com or regencymovies.com. Treat their
+  request-building logic as verified-against-captured-samples, not
+  verified-end-to-end, and expect first-real-run adjustment.
+- **`APP_PASSWORD` is a real, functioning access gate** (`server.js`
+  line ~46-70s), not decorative — set it before exposing this past
+  localhost (e.g. via a tunnel or Railway) or anyone with the URL can burn
+  your API quota.
