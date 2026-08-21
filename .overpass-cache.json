@@ -170,6 +170,143 @@
         "address": null
       }
     ],
-    "fetchedAt": 1787194402680
+    "fetchedAt": 1787281183071
+  },
+  "34.1477,-118.1442,14752": {
+    "theaters": [
+      {
+        "name": "Highland Theatre",
+        "lat": 34.1090062,
+        "lng": -118.1936572,
+        "address": "N Figueroa Street"
+      },
+      {
+        "name": "Regal Paseo",
+        "lat": 34.144972,
+        "lng": -118.1433769,
+        "address": "East Colorado Boulevard"
+      },
+      {
+        "name": "Regency Academy Cinemas",
+        "lat": 34.1460921,
+        "lng": -118.129678,
+        "address": "East Colorado Boulevard"
+      },
+      {
+        "name": "Landmark Theaters Pasadena",
+        "lat": 34.1460311,
+        "lng": -118.1364723,
+        "address": "East Colorado Boulevard"
+      },
+      {
+        "name": "Regal Edwards Alhambra Renaissance",
+        "lat": 34.096209,
+        "lng": -118.1267188,
+        "address": "East Main Street"
+      },
+      {
+        "name": "Los Feliz 3",
+        "lat": 34.1043591,
+        "lng": -118.2916172,
+        "address": "North Vermont Avenue"
+      },
+      {
+        "name": "LATimes Auditorium",
+        "lat": 34.167671,
+        "lng": -118.1848714,
+        "address": null
+      },
+      {
+        "name": "Downtown Independent",
+        "lat": 34.050177,
+        "lng": -118.2455381,
+        "address": null
+      },
+      {
+        "name": "Regency Commerce 14",
+        "lat": 34.0182922,
+        "lng": -118.1538883,
+        "address": "Goodrich Boulevard"
+      },
+      {
+        "name": "AMC Atlantic Times Square 14",
+        "lat": 34.0674731,
+        "lng": -118.133583,
+        "address": "North Atlantic Boulevard"
+      },
+      {
+        "name": "Laemmle Glendale",
+        "lat": 34.1485511,
+        "lng": -118.2540142,
+        "address": "N. Maryland Avenue"
+      },
+      {
+        "name": "Five Star Cinema",
+        "lat": 34.1475397,
+        "lng": -118.2537678,
+        "address": "North Artsakh Avenue"
+      },
+      {
+        "name": "Vidiots",
+        "lat": 34.1348871,
+        "lng": -118.2150941,
+        "address": "Eagle Rock Boulevard"
+      },
+      {
+        "name": "IPIC Theaters",
+        "lat": 34.1465685,
+        "lng": -118.1515106,
+        "address": "Miller Alley"
+      },
+      {
+        "name": "UA La Canada 8",
+        "lat": 34.2065443,
+        "lng": -118.2169934,
+        "address": null
+      },
+      {
+        "name": "AMC Montebello 10",
+        "lat": 34.0340216,
+        "lng": -118.0927575,
+        "address": "North Montebello Boulevard"
+      },
+      {
+        "name": "The Vista Theatre",
+        "lat": 34.0984669,
+        "lng": -118.2869442,
+        "address": "Sunset Boulevard"
+      },
+      {
+        "name": "Echo Park Film Center",
+        "lat": 34.0782245,
+        "lng": -118.2628478,
+        "address": "Alvarado Street"
+      },
+      {
+        "name": "Highland Theatre",
+        "lat": 34.1088459,
+        "lng": -118.1935561,
+        "address": "North Figueroa Street"
+      },
+      {
+        "name": "SMG Monrovia",
+        "lat": 34.1475373,
+        "lng": -118.0003249,
+        "address": "South Myrtle Avenue"
+      },
+      {
+        "name": "AMC Americana at Brand 18",
+        "lat": 34.1431335,
+        "lng": -118.2570711,
+        "address": "Americana Way"
+      },
+      {
+        "name": "AMC Santa Anita 16",
+        "lat": 34.1354254,
+        "lng": -118.0486729,
+        "address": "South Baldwin Avenue"
+      }
+    ],
+    "fetchedAt": 1787284584328
   }
 }

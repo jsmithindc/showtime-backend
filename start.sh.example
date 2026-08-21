@@ -14,6 +14,19 @@ export SCRAPEDO_TOKEN="paste-your-real-token-here"
 # automatically fall over to ZenRows once Scrape.do's quota is
 # exhausted, instead of failing outright.
 export ZENROWS_API_KEY="paste-your-real-key-here"
+# Third fallback for Regal pricing -- Apify's Super Scraper API actor.
+# Get your token from Apify Console -> Integrations, not the actor page.
+export APIFY_API_TOKEN="paste-your-real-key-here"
+# Fourth/last fallback for Regal pricing -- tried only after the other
+# three are unconfigured/exhausted. UNCONFIRMED whether it can get
+# through Regal's Cloudflare protection; see the long comment in
+# lib/proxyProviders/firecrawl.js.
+export FIRECRAWL_API_KEY="paste-your-real-key-here"
+# Fifth fallback for Regal pricing -- requires BOTH values. Requires
+# payment info on file to create the zone (unlike every other provider
+# here), so this is opt-in.
+export BRIGHTDATA_API_KEY="paste-your-real-key-here"
+export BRIGHTDATA_ZONE="paste-your-zone-name-here"
 export AMC_VENDOR_KEY="paste-your-real-key-here"
 export DISABLE_REGAL_PRICING="false"  # set to "true" to pause Regal/Scrape.do pricing again
 export DISABLE_CINEMARK_PRICING="false"  # set to "true" to pause Cinemark direct pricing

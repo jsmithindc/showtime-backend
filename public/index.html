@@ -357,7 +357,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">2.7</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.1</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -659,6 +659,15 @@
             'beforeend',
             newTitles.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')
           );
+          // Keep the whole list alphabetical after appending -- without
+          // this, newly-discovered titles would land at the end in
+          // whatever order the server returned them, breaking the sort
+          // order the initial "/api/popular-movies" load already
+          // established.
+          const sortedOptions = [...els.movie.options].sort((a, b) =>
+            a.value.localeCompare(b.value, undefined, { sensitivity: 'base' })
+          );
+          sortedOptions.forEach((opt) => els.movie.appendChild(opt)); // re-appending an existing <option> moves it, doesn't duplicate it
         }
         // Re-apply a saved selection from a previous session if it's
         // now among the loaded movies; otherwise keep whatever was
@@ -712,8 +721,8 @@
 
     els.banners.innerHTML = '';
     els.results.innerHTML = '';
-    activeResultFormats = null; // fresh search -- reset to "all formats on"
-    activeResultChains = null; // fresh search -- reset to "all chains on"
+    activeResultFormats = new Set(); seenResultFormats = new Set(); // fresh search -- reset to "all formats on"
+    activeResultChains = new Set(); seenResultChains = new Set(); // fresh search -- reset to "all chains on"
 
     if (!movie || ((!lat || !lng) && !place) || !radius || !deadline) {
       els.banners.innerHTML = '<div class="banner error">Fill in movie, location, radius, and deadline before searching.</div>';
@@ -737,7 +746,6 @@
     } else {
       params.set('place', place);
     }
-    if (debug) params.set('debug', 'true');
 
     els.searchBtn.disabled = true;
     els.searchBtn.textContent = 'Searching...';
@@ -761,7 +769,35 @@
     }
 
     const regalPromise = wantsRegal
-      ? fetch(`/api/search-regal?${regalParams.toString()}`).then((r) => r.json()).catch(() => null)
+      ? fetch(`/api/search-regal?${regalParams.toString()}`)
+          .then(async (r) => {
+            if (!r.ok) {
+              // A real HTTP error (e.g. a server-side 500) still has a
+              // body worth capturing -- try to read it as text even
+              // though it might not be valid JSON, since a raw error
+              // message is more useful here than nothing.
+              const text = await r.text().catch(() => '(could not read response body)');
+              throw new Error(`Regal endpoint returned ${r.status}: ${text.slice(0, 300)}`);
+            }
+            return r.json();
+          })
+          .catch((err) => {
+            // CONFIRMED REAL GAP, found from a live report: this used to
+            // be a blanket .catch(() => null) that swallowed EVERY
+            // possible failure -- network errors, a real server 500, a
+            // JSON.parse failure on a malformed response -- with zero
+            // logging and zero way to tell "genuinely fetched zero
+            // results" apart from "the fetch/parse itself silently
+            // died." A live report showed the backend log completing
+            // cleanly with no pricing failures at all, yet the UI
+            // showed nothing for Regal whatsoever -- exactly the
+            // scenario this blind spot couldn't explain. Logging the
+            // real error now, and returning a distinct marker instead
+            // of null so the merge handler below can tell the two cases
+            // apart and say so.
+            console.error('Regal fetch/parse failed:', err);
+            return { __fetchError: err.message };
+          })
       : Promise.resolve(null);
 
     try {
@@ -790,6 +826,16 @@
 
         regalPromise.then((regalData) => {
           regalNote.remove();
+
+          if (regalData && regalData.__fetchError) {
+            const errBanner = document.createElement('div');
+            errBanner.className = 'banner error';
+            errBanner.style.cssText = 'margin-top:8px; font-size:12px;';
+            errBanner.textContent = `Regal results failed to load: ${regalData.__fetchError}`;
+            els.banners.appendChild(errBanner);
+            return;
+          }
+
           if (!regalData || !regalData.results || regalData.results.length === 0) return;
 
           const merged = { ...lastRenderData, results: [...(lastRenderData.results || []), ...regalData.results] };
@@ -824,8 +870,8 @@
 
     els.banners.innerHTML = '';
     els.results.innerHTML = '';
-    activeResultFormats = null; // fresh search -- reset to "all formats on"
-    activeResultChains = null; // fresh search -- reset to "all chains on"
+    activeResultFormats = new Set(); seenResultFormats = new Set(); // fresh search -- reset to "all formats on"
+    activeResultChains = new Set(); seenResultChains = new Set(); // fresh search -- reset to "all chains on"
 
     if (((!lat || !lng) && !place) || !radius || !availableFrom || !hours) {
       els.banners.innerHTML = '<div class="banner error">Fill in location, radius, "free from" time, and how many hours before searching.</div>';
@@ -895,7 +941,7 @@
   // clicking a chip (so toggling doesn't lose your other selections),
   // but gets reset to "all on" whenever a genuinely new search runs
   // (see the reset calls in runSearch/runWindowSearch).
-  let activeResultFormats = null; // null = not yet initialized for this result set
+  let activeResultFormats = new Set(); // starts empty; renderResults() populates it as new formats are seen
 
   // Post-search chain filter -- same pattern as activeResultFormats
   // above (any subset can be on, resets to "all on" for a genuinely new
@@ -903,7 +949,17 @@
   // Standard format AND only AMC/Regal at the same time -- these are
   // two independent filters over the same result set, not one combined
   // control.
-  let activeResultChains = null; // null = not yet initialized for this result set
+  let activeResultChains = new Set(); // starts empty; renderResults() populates it as new chains are seen
+
+  // Tracks every format/chain value ever seen THIS search (not just
+  // what's currently active) -- see the long comment in renderResults
+  // for why this exists: without it, a value that arrives on a LATER
+  // merge (Regal's results specifically, which fetch separately and
+  // finish after the main search) would never get added to the active
+  // Set and would silently read as "toggled off" despite the user never
+  // touching it.
+  let seenResultFormats = new Set();
+  let seenResultChains = new Set();
 
   const CHAIN_DISPLAY_NAMES = {
     amc: "AMC",
@@ -972,7 +1028,7 @@
           <div class="time-large">${fmtTime24to12FromRaw(r.startTime)}</div>
           ${(r.filmActuallyStartsAt || r.estimatedEndTime) ? `<div class="time-sub">${r.filmActuallyStartsAt ? `Skip trailers, arrive ${escapeHtml(r.filmActuallyStartsAt)}` : ''}${r.filmActuallyStartsAt && r.estimatedEndTime ? ' &middot; ' : ''}${r.estimatedEndTime ? `Done by ${escapeHtml(r.estimatedEndTime)}` : ''}</div>` : ''}
           <div class="meta">
-            <span class="format-badge">${escapeHtml(r.format)}</span>
+            <span class="format-badge"${getFormatDescription(r.format) ? ` title="${escapeHtml(getFormatDescription(r.format))}"` : ''}>${escapeHtml(r.format)}</span>
             ${r.ticketTypeName ? `<span class="format-badge" style="opacity:0.75;" title="This chain's own real ticket tier for this exact showing, not a guessed rule">${escapeHtml(r.ticketTypeName)}</span>` : ''}
           </div>
           ${r.bookingLink ? `<a class="card-link" href="${r.bookingLink}" target="_blank" rel="noopener">Check showtime / tickets &rarr;</a>` : ''}
@@ -983,7 +1039,16 @@
   }
 
   function toggleResultFormat(format) {
-    if (activeResultFormats.has(format)) {
+    // Solo-select behavior: if every known format is currently on (the
+    // default/unfiltered state), clicking one solos it instead of just
+    // adding to an already-full set -- otherwise a first click would do
+    // nothing visible (it's already on). Once something's been solo'd,
+    // subsequent clicks toggle normally (add/remove), since the set is
+    // no longer "everything."
+    const allOn = activeResultFormats.size === seenResultFormats.size;
+    if (allOn) {
+      activeResultFormats = new Set([format]);
+    } else if (activeResultFormats.has(format)) {
       activeResultFormats.delete(format);
     } else {
       activeResultFormats.add(format);
@@ -993,7 +1058,10 @@
   window.toggleResultFormat = toggleResultFormat; // reachable from inline onclick handlers below
 
   function toggleResultChain(chain) {
-    if (activeResultChains.has(chain)) {
+    const allOn = activeResultChains.size === seenResultChains.size;
+    if (allOn) {
+      activeResultChains = new Set([chain]);
+    } else if (activeResultChains.has(chain)) {
       activeResultChains.delete(chain);
     } else {
       activeResultChains.add(chain);
@@ -1035,12 +1103,39 @@
 
     const allResults = data.results || [];
     const allFormats = [...new Set(allResults.map((r) => r.format).filter(Boolean))];
-    if (activeResultFormats === null) {
-      activeResultFormats = new Set(allFormats); // default: everything on
-    }
     const allChains = [...new Set(allResults.map((r) => r.chain).filter(Boolean))];
-    if (activeResultChains === null) {
-      activeResultChains = new Set(allChains); // default: everything on
+
+    // CONFIRMED REAL BUG, found from a live report: Regal's results
+    // arrive in a SEPARATE, later fetch and get merged in via a second
+    // renderResults() call (see the comment on regalPromise above) --
+    // so by the time "regal" first appears in allChains, the `=== null`
+    // initialization guard below has already fired once on the FIRST
+    // render (before Regal existed) and won't fire again. "regal" would
+    // then be permanently absent from activeResultChains -- not
+    // deliberately toggled off, just never added -- which reads on
+    // screen as an unchecked chip despite the user never touching it.
+    // The exact same shape of bug exists for formats: if any chain ever
+    // introduces a format that isn't already present in the first
+    // batch, it would go missing the same way, for the same reason.
+    //
+    // Fix: track every value ever SEEN this search (not just what's
+    // currently in a Set), and auto-add any genuinely new one as "on".
+    // This preserves a real user toggle-off (the value stays absent
+    // from activeResultFormats/Chains, but IS present in the seen set,
+    // so it's not re-added) while still defaulting brand-new values
+    // that show up on a later merge to visible, matching what the
+    // person would reasonably expect on first seeing a new option.
+    for (const f of allFormats) {
+      if (!seenResultFormats.has(f)) {
+        seenResultFormats.add(f);
+        activeResultFormats.add(f);
+      }
+    }
+    for (const c of allChains) {
+      if (!seenResultChains.has(c)) {
+        seenResultChains.add(c);
+        activeResultChains.add(c);
+      }
     }
 
     const results = allResults.filter((r) => activeResultFormats.has(r.format) && activeResultChains.has(r.chain));
@@ -1117,10 +1212,13 @@
     // fetched results are shown, no re-search. Only rendered when there's
     // more than one distinct format to actually choose between.
     const filterChipsHtml = allFormats.length > 1
-      ? `<div class="chips" style="margin-bottom:12px;">${allFormats.map((f) => {
-          const on = activeResultFormats.has(f);
-          return `<button class="chip ${on ? 'on' : ''}" onclick="toggleResultFormat(${JSON.stringify(f).replace(/"/g, '&quot;')})">${escapeHtml(f)}</button>`;
-        }).join('')}</div>`
+      ? `<div style="margin-bottom:12px;">
+          <label style="display:block; font-size:11px; color:var(--ink-dim); margin-bottom:4px;">Formats</label>
+          <div class="chips">${allFormats.map((f) => {
+            const on = activeResultFormats.has(f);
+            return `<button class="chip ${on ? 'on' : ''}" onclick="toggleResultFormat(${JSON.stringify(f).replace(/"/g, '&quot;')})">${escapeHtml(f)}</button>`;
+          }).join('')}</div>
+        </div>`
       : '';
 
     // Chain filter chips -- same pattern and same styling as the format
@@ -1130,11 +1228,14 @@
     // rule as the format chips -- a single-chain search doesn't need a
     // filter for a choice that doesn't exist.
     const chainChipsHtml = allChains.length > 1
-      ? `<div class="chips" style="margin-bottom:12px;">${allChains.map((c) => {
-          const on = activeResultChains.has(c);
-          const label = CHAIN_DISPLAY_NAMES[c] || c;
-          return `<button class="chip ${on ? 'on' : ''}" onclick="toggleResultChain(${JSON.stringify(c).replace(/"/g, '&quot;')})">${escapeHtml(label)}</button>`;
-        }).join('')}</div>`
+      ? `<div style="margin-bottom:12px;">
+          <label style="display:block; font-size:11px; color:var(--ink-dim); margin-bottom:4px;">Chains</label>
+          <div class="chips">${allChains.map((c) => {
+            const on = activeResultChains.has(c);
+            const label = CHAIN_DISPLAY_NAMES[c] || c;
+            return `<button class="chip ${on ? 'on' : ''}" onclick="toggleResultChain(${JSON.stringify(c).replace(/"/g, '&quot;')})">${escapeHtml(label)}</button>`;
+          }).join('')}</div>
+        </div>`
       : '';
 
     // Sort toggle -- always rendered (unlike the format chips, which
@@ -1205,6 +1306,61 @@
     const div = document.createElement('div');
     div.textContent = str ?? '';
     return div.innerHTML;
+  }
+
+  // Plain-language descriptions for premium/specialty screen formats,
+  // shown as a hover tooltip on the format badge.
+  //
+  // CONFIRMED REAL BUG in the first version of this, caught from a live
+  // report: it matched the ENTIRE normalized badge against one exact
+  // dictionary key, so only a badge that was purely "4DX" (nothing
+  // else) ever matched anything. Real Cinemark badges are routinely
+  // compound combos -- "XD Luxury Lounger RealD 3D D-BOX", "Luxury
+  // Lounger D-BOX" -- and a fully-concatenated exact match can never
+  // equal a single dictionary entry. Rewritten to check whether each
+  // known keyword/phrase appears ANYWHERE in the badge, and to combine
+  // every match into one tooltip when a badge genuinely bundles several
+  // real features together, rather than silently picking one and
+  // hiding the rest. Also adds "Luxury Lounger" itself, missing from
+  // the first version despite being a real, independently-occurring
+  // feature (seen both combined with D-BOX and on its own).
+  //
+  // Normalizes by turning non-alphanumeric characters into SPACES
+  // (not deleting them) so multi-word phrases stay distinguishable --
+  // "D-BOX" becomes "d box", "Dolby Cinema" becomes "dolby cinema" --
+  // rather than collapsing everything into one unbroken blob where a
+  // phrase like "luxury lounger" could never be matched as two words.
+  const FORMAT_DESCRIPTIONS = [
+    { match: 'dolby cinema', text: 'Dolby Vision laser projection (extreme brightness and contrast) paired with Dolby Atmos surround sound and specially designed reclining seats.' },
+    { match: 'rpx', text: "Regal's premium large-format screen: a bigger curved screen, upgraded picture quality, and a more powerful surround sound system." },
+    { match: 'xd', text: 'A premium large-format screen with an oversized curved image and a stronger sound system than a standard auditorium.' },
+    { match: '4dx', text: 'Motion seats that tilt and move in sync with on-screen action, plus environmental effects like wind, mist, and scent.' },
+    { match: 'lg led', text: "A premium screen using LG's direct-view LED display instead of a projector -- brighter image and deeper blacks, without needing a dark projection booth." },
+    // Two spelling variants seen in real use -- "D-BOX" (hyphen becomes
+    // a space after normalization) and the unhyphenated "DBOX".
+    { match: 'd box', text: 'Motion seating that moves in sync with the on-screen action -- similar in spirit to 4DX, but without the added environmental effects like wind or scent.' },
+    { match: 'dbox', text: 'Motion seating that moves in sync with the on-screen action -- similar in spirit to 4DX, but without the added environmental effects like wind or scent.' },
+    { match: 'luxury lounger', text: 'Extra-wide, plush reclining lounge seating -- a comfort upgrade on its own, distinct from D-BOX\'s motorized motion seating (though some auditoriums combine both).' },
+  ];
+
+  function getFormatDescription(format) {
+    const normalized = (format || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+    if (!normalized) return null;
+
+    const matched = [];
+    const seenText = new Set(); // avoid double-counting "d box" and "dbox" both hitting the same badge
+    for (const { match, text } of FORMAT_DESCRIPTIONS) {
+      if (normalized.includes(match) && !seenText.has(text)) {
+        matched.push(text);
+        seenText.add(text);
+      }
+    }
+    return matched.length ? matched.join('\n\n') : null;
   }
 
   function runCurrentModeSearch() {

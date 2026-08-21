@@ -27,6 +27,7 @@ const CINEMARK_THEATER_SLUGS = require("./lib/cinemark-theater-slugs");
 const { getRuntimeForMovieAtTheater, getCinemarkMovieIdForTitle } = require("./lib/cinemark-runtime-scraper");
 const { geocodeForward } = require("./lib/geocode");
 const { getRuntimeMinutes } = require("./lib/movie-runtime");
+const { configuredProviders } = require("./lib/proxyProviders");
 
 const { getStingerInfo, getInTheatersList } = require("./lib/mediaStinger");
 
@@ -308,6 +309,40 @@ function harkinsDisplayFormat(rawFormat) {
   return (rawFormat || "").toLowerCase() === "digital" ? "Standard" : rawFormat;
 }
 
+// Same clutter, same fix, different chain: Cinemark's own raw format
+// strings pass straight through unmodified elsewhere in this file --
+// CONFIRMED real examples from Cinemark's own showtimes response:
+// "Standard Format" for a plain screening, "XD Luxury Lounger RealD 3D"
+// for a premium combo (see the long comment in cinemark-official.js).
+// "Standard Format" was showing up as its OWN separate post-search
+// filter chip instead of merging into the shared "Standard" chip every
+// other chain uses -- two near-identical chips ("Standard" and
+// "Standard Format") cluttering the same row. Also strips the filler
+// word "Format" from premium strings for the same reason it's dropped
+// from the plain case: it never adds real information ("XD Luxury
+// Lounger RealD 3D Format" wouldn't read any more clearly than "XD
+// Luxury Lounger RealD 3D"). Cinemark's own pricing logic reads
+// perf.format directly elsewhere, not this display value, so nothing
+// downstream of display is affected.
+function cinemarkDisplayFormat(rawFormat) {
+  const trimmed = (rawFormat || "").trim();
+  if (trimmed.toLowerCase() === "standard format") return "Standard";
+  const withoutFormat = trimmed.replace(/\s*\bformat\b\s*/i, " ").trim() || trimmed;
+  // CONFIRMED REAL from a live report: Cinemark's own raw data returns
+  // inconsistent capitalization for the same feature across different
+  // theaters/records -- "D-BOX" from one, "D-Box" from another -- which
+  // produced two separate, near-identical chips ("Standard Luxury
+  // Lounger D-BOX" and "Standard Luxury Lounger D-Box") instead of one.
+  // Normalized to a single canonical casing here, at the source, so
+  // both the DISPLAY and the filter-matching (which compares this same
+  // string) treat every casing variant as the same value -- fixing it
+  // only in the chip-generation logic on the frontend wouldn't have
+  // been enough, since individual result cards still need to match
+  // whichever chip is active regardless of which casing that specific
+  // theater happened to return.
+  return withoutFormat.replace(/d-?box/gi, "D-BOX");
+}
+
 // Module-level standalone copies of formatEndTime/formatEndTimeRange
 // (the originals are local to the main /api/search handler) -- needed
 // by /api/search-regal, which is self-contained rather than sharing
@@ -517,6 +552,19 @@ app.get("/api/search", async (req, res) => {
           const caRegalTheaters = require("./lib/regal-theaters-ca");
           for (const t of unmappedRegalInRange) {
             if (!isRoughlyInCalifornia(t.lat, t.lng)) continue;
+            // Same real bug and same fix as the AMC block below this
+            // one -- distance-only matching wrongly paired unrelated
+            // theaters together. This block is actually MORE exposed to
+            // it: a 2-mile radius ("city-level estimate", see the log
+            // message) is a much wider net than AMC's 0.3mi, so a false
+            // positive here is if anything more likely, not less.
+            if (!/\bregal\b/i.test(t.name)) {
+              console.error(
+                `Regal auto-match skipped: OSM theater "${t.name}" doesn't mention Regal in its own name -- ` +
+                `not attempting a distance-only match.`
+              );
+              continue;
+            }
             const match = findClosestAmcTheater(t.lat, t.lng, caRegalTheaters, 2);
             if (match) {
               regalResolvedIds[t.name] = match.id;
@@ -545,6 +593,29 @@ app.get("/api/search", async (req, res) => {
           const caAmcTheaters = await getAmcTheatersByState("CA");
           for (const t of unmappedAmcInRange) {
             if (!isRoughlyInCalifornia(t.lat, t.lng)) continue;
+            // CONFIRMED REAL BUG, caught from a live report: distance-
+            // only matching wrongly paired "Laemmle Glendale" (a real,
+            // entirely separate art-house chain) and "Five Star Cinema"
+            // (reportedly no longer exists at all) with an unrelated AMC
+            // theater, purely because both happened to sit within the
+            // 0.3mi threshold in a dense shopping-district area (The
+            // Americana at Brand, which has multiple distinct venues
+            // close together). The threshold's own reasoning -- "0.3mi
+            // is almost certainly the same building" -- turned out
+            // false in exactly this kind of area. Real evidence from
+            // the same log: every CORRECT match already had "AMC" in
+            // its own OSM name; neither wrong match did. Requiring that
+            // signal before even attempting a distance match closes
+            // this specific failure mode without needing a smaller,
+            // riskier distance threshold that could reject genuine
+            // matches elsewhere.
+            if (!/\bamc\b/i.test(t.name)) {
+              console.error(
+                `AMC auto-match skipped: OSM theater "${t.name}" doesn't mention AMC in its own name -- ` +
+                `not attempting a distance-only match (see the comment above this line for why).`
+              );
+              continue;
+            }
             const match = findClosestAmcTheater(t.lat, t.lng, caAmcTheaters);
             if (match) {
               amcResolvedIds[t.name] = match.id;
@@ -573,6 +644,16 @@ app.get("/api/search", async (req, res) => {
           const caCinemarkTheaters = require("./lib/cinemark-theaters-ca");
           for (const t of unmappedCinemarkInRange) {
             if (!isRoughlyInCalifornia(t.lat, t.lng)) continue;
+            // Same real bug and same fix as the AMC/Regal auto-match
+            // blocks above -- distance-only matching risks silently
+            // pairing an unrelated theater with the wrong chain.
+            if (!/\bcinemark\b/i.test(t.name)) {
+              console.error(
+                `Cinemark auto-match skipped: OSM theater "${t.name}" doesn't mention Cinemark in its own name -- ` +
+                `not attempting a distance-only match.`
+              );
+              continue;
+            }
             const match = findClosestAmcTheater(t.lat, t.lng, caCinemarkTheaters);
             if (match) {
               cinemarkResolvedIds[t.name] = match.id;
@@ -1048,7 +1129,7 @@ app.get("/api/search", async (req, res) => {
               theaterName,
               distanceMin: distanceMinByTheaterId[s.theaterId],
               startTimeRaw,
-              format: s.format,
+              format: cinemarkDisplayFormat(s.format),
               chain: "cinemark",
             });
             if (wouldBeInWindow) toPrice.push({ theaterName, match: s, startTimeRaw });
@@ -1068,7 +1149,7 @@ app.get("/api/search", async (req, res) => {
                     theaterName,
                     distanceMin: distanceMinByTheaterId[match.theaterId],
                     startTimeRaw,
-                    format: match.format,
+                    format: cinemarkDisplayFormat(match.format),
                     price: priced.price,
                     chain: "cinemark",
                     priceSource: priced.price != null ? "cinemark-direct" : null,
@@ -1937,6 +2018,13 @@ app.get("/api/search-regal", async (req, res) => {
   const { movie, radiusMin, deadline, formats, date } = req.query;
   let { lat, lng, location, place } = req.query;
 
+  // Same diagnostic as the boot-time log, repeated here so it's visible
+  // directly inside a specific search's own log output -- confirms
+  // which providers this exact request will actually be able to use,
+  // without needing to scroll back to server startup or guess from
+  // which error message happens to surface last.
+  console.error(`Regal search starting -- active proxy providers: ${configuredProviders().map((p) => p.NAME).join(", ") || "NONE"}`);
+
   if (!movie || !radiusMin || !deadline) {
     return res.status(400).json({ error: "movie, radiusMin, and deadline are required" });
   }
@@ -1990,6 +2078,25 @@ app.get("/api/search-regal", async (req, res) => {
         const caRegalTheaters = require("./lib/regal-theaters-ca");
         for (const t of unmappedRegalInRange) {
           if (!isRoughlyInCalifornia(t.lat, t.lng)) continue;
+          // CONFIRMED REAL BUG, caught from a live report: this is a
+          // SECOND, separate copy of the same distance-only matching
+          // logic already fixed once elsewhere in this file (the main
+          // /api/search handler) -- this copy, used by the dedicated
+          // /api/search-regal endpoint, never got the same fix. Real
+          // consequence: "Regency Academy Cinemas" (a genuinely
+          // different, real theater) got matched to "Regal Paseo"'s
+          // real cinema code purely because it was within the 2-mile
+          // radius -- showing Regal Paseo's correct real times/prices,
+          // but displayed under Regency Academy Cinemas' name. Same
+          // fix as the other copy: require the OSM name to actually
+          // mention Regal before attempting a distance-only match.
+          if (!/\bregal\b/i.test(t.name)) {
+            console.error(
+              `Regal auto-match skipped (search-regal endpoint): OSM theater "${t.name}" doesn't mention Regal ` +
+              `in its own name -- not attempting a distance-only match.`
+            );
+            continue;
+          }
           const match = findClosestAmcTheater(t.lat, t.lng, caRegalTheaters, 2);
           if (match) regalResolvedIds[t.name] = match.id;
         }
@@ -2075,10 +2182,20 @@ app.get("/api/search-regal", async (req, res) => {
             const inWindow = movieMatches.filter((p) =>
               regalResultIfWithinWindow({ theaterName, distanceMin: theater.distanceMin, startTimeRaw: p.showTime.slice(0, 5) })
             );
+            // CONFIRMED REAL GAP, found chasing a live report of a
+            // specific showtime (12:10pm) not appearing in results: this
+            // line only ever reported COUNTS, never the actual times
+            // found -- unlike Harkins' equivalent line a few hundred
+            // lines up, which lists every real time seen. That made it
+            // impossible to tell "our filter dropped a real showing" apart
+            // from "Regal's own listing never had it" without re-deriving
+            // the answer by elimination each time. Listing every matched
+            // showtime's raw time now closes that gap for good.
             console.error(
               `Regal [${regalResolvedIds[theaterName]}]: found ${allPerformances.length} total performances, ` +
               `${movieMatches.length} matching "${movie}", ${inWindow.length} within your search window ` +
-              `(pricing only these). Movies seen: ${[...new Set(allPerformances.map((p) => p.movieName))].join(", ") || "(none)"}`
+              `(pricing only these). Movies seen: ${[...new Set(allPerformances.map((p) => p.movieName))].join(", ") || "(none)"}. ` +
+              `Real times seen for "${movie}": ${movieMatches.map((p) => p.showTime.slice(0, 5)).join(", ") || "(none)"}`
             );
             const MAX_PERFORMANCES_PER_THEATER = 2;
             const toPrice = inWindow.slice(0, MAX_PERFORMANCES_PER_THEATER);
@@ -2368,4 +2485,19 @@ app.get("/api/window-search", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+// CONFIRMED useful diagnostic: the previous report of "Apify/Firecrawl
+// never get tried" turned out ambiguous from the search log alone --
+// "Last error: scrape.do quota exhausted" is consistent with either
+// "Apify/Firecrawl aren't configured" or "they were tried and something
+// swallowed their own log output," and there was no way to tell which
+// from that log. This settles it directly, once, at boot, instead of
+// inferring from an indirect symptom during a search.
+const activeProviders = configuredProviders().map((p) => p.NAME);
+console.log(
+  activeProviders.length > 0
+    ? `Proxy providers configured and active: ${activeProviders.join(", ")}`
+    : `WARNING: no proxy providers are configured at all -- Regal pricing will fail outright. ` +
+      `Check SCRAPEDO_TOKEN, ZENROWS_API_KEY, APIFY_API_TOKEN, FIRECRAWL_API_KEY in start.sh.`
+);
+
 app.listen(PORT, () => console.log(`Showtime Finder API on :${PORT}`));
