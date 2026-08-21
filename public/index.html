@@ -85,6 +85,7 @@
   input[type="number"],
   input[type="time"] {
     width: 100%;
+    max-width: 100%;
     background: var(--marquee);
     border: 1px solid var(--stub-line);
     color: var(--ink);
@@ -95,6 +96,19 @@
   }
 
   input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+
+  /* iOS Safari/WebKit (which Brave, Chrome, etc. all run on under Apple's
+     rules) doesn't fully honor box-sizing: border-box on the native
+     time-input control -- its own picker chrome pads out past the
+     declared box instead of being contained inside it, so the rendered
+     control ends up wider than the card around it. Stripping the native
+     appearance hands sizing back to normal CSS box-model rules; the
+     control still opens the native wheel picker on tap since it's still
+     type="time", only its skin changes. */
+  input[type="time"] {
+    -webkit-appearance: none;
+    appearance: none;
+  }
 
   .coord-row { display: flex; gap: 8px; align-items: flex-end; }
   .coord-row .field { flex: 1; }
