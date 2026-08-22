@@ -1926,6 +1926,22 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 // see lib/mediaStinger.js) pre-population for the movie dropdown, so
 // picking a common wide-release movie doesn't require waiting on
 // "Load nearby" (which costs a real SerpApi call per nearby theater)
+// Thin geocoding endpoint so the frontend can resolve a place/zip to
+// lat/lng ONCE before firing /api/search and /api/search-regal in
+// parallel. Without this, both backend calls geocode the same place
+// simultaneously, racing to Nominatim and triggering 429s on Render's
+// shared datacenter IP range even though one call would have been enough.
+app.get("/api/geocode", async (req, res) => {
+  const { place } = req.query;
+  if (!place) return res.status(400).json({ error: "place is required" });
+  try {
+    const geo = await geocodeForward(place);
+    res.json(geo);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // first. Doesn't replace /api/movies -- that's still how you'd find
 // something playing only at a specific local/independent theater that
 // wouldn't show up in a general nationwide "in theaters" listing.

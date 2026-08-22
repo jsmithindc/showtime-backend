@@ -771,6 +771,31 @@
     els.searchBtn.textContent = 'Searching...';
     els.statusLine.textContent = 'Checking nearby theaters...';
 
+    // When the user typed a place/zip instead of coordinates, geocode it
+    // ONCE here before firing both /api/search and /api/search-regal.
+    // Without this, both backend calls geocode the same place in parallel,
+    // racing to Nominatim and triggering 429s on Render's shared IP range.
+    let resolvedLat = lat, resolvedLng = lng;
+    if ((!lat || !lng) && place) {
+      try {
+        const geo = await fetch(`/api/geocode?place=${encodeURIComponent(place)}`).then((r) => r.json());
+        if (geo.error) throw new Error(geo.error);
+        resolvedLat = String(geo.lat);
+        resolvedLng = String(geo.lng);
+      } catch (err) {
+        els.banners.innerHTML = `<div class="banner error">Couldn't find location "${place}": ${err.message}</div>`;
+        els.searchBtn.disabled = false;
+        els.searchBtn.textContent = 'Find showtimes';
+        return;
+      }
+    }
+
+    // Rebuild params using resolved coordinates so both calls below send
+    // lat/lng and neither has to geocode again.
+    params.delete('place');
+    params.set('lat', resolvedLat);
+    params.set('lng', resolvedLng);
+
     // Regal split out into its own request (see /api/search-regal) --
     // its retry-with-delays logic can make it noticeably slower than
     // every other chain, so it shouldn't hold up showing everything
@@ -781,12 +806,8 @@
       date: els.searchDate.value,
       formats: activeFormats.join(','),
     });
-    if (lat && lng) {
-      regalParams.set('lat', lat);
-      regalParams.set('lng', lng);
-    } else {
-      regalParams.set('place', place);
-    }
+    regalParams.set('lat', resolvedLat);
+    regalParams.set('lng', resolvedLng);
 
     const regalPromise = wantsRegal
       ? fetch(`/api/search-regal?${regalParams.toString()}`)
