@@ -26,6 +26,7 @@ const AMC_THEATRE_MAP = require("./lib/amc-theatre-map"); // static fallback whe
 const {
   getShowtimesForMovie: getCinemarkShowtimesForMovie,
   getTicketPricing: getCinemarkTicketPricing,
+  buildTicketSeatMapUrl: buildCinemarkTicketUrl,
 } = require("./lib/priceAdapters/cinemark-official");
 const CINEMARK_THEATER_MAP = require("./lib/cinemark-theater-map");
 const CINEMARK_MOVIE_MAP = require("./lib/cinemark-movie-map");
@@ -810,7 +811,9 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
           if (dMin <= discoveryRadiusMin) {
             // Strip Cinemark's SEO prefix ("Movie Theater In X, Y | Cinemark Z" -> "Cinemark Z")
-            const cleanName = t.name.includes(" | ") ? t.name.split(" | ").pop() : t.name;
+            // and decode HTML entities (&amp; -> &) baked into the theater list.
+            const rawName = t.name.includes(" | ") ? t.name.split(" | ").pop() : t.name;
+            const cleanName = rawName.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
             cinemarkDirectTheaters.push({ ...t, name: cleanName, distanceMin: dMin });
           }
         }
@@ -1278,7 +1281,12 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                     price: priced.price,
                     chain: "cinemark",
                     priceSource: priced.price != null ? "cinemark-direct" : null,
-                    bookingLink: googleFallbackLink(theaterName, movie),
+                    bookingLink: buildCinemarkTicketUrl({
+                      theaterId: match.theaterId,
+                      showtimeId: match.showtimeId,
+                      cinemarkMovieId: match.cinemarkMovieId,
+                      showtimeISO: match.showtimeISO,
+                    }),
                     priceExtras: {
                       priceBeforeFee: priced.priceBeforeFee,
                       fee: priced.fee,
