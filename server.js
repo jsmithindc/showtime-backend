@@ -649,6 +649,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     const regalDirectTheaters = [];
     const amcDirectTheaters = [];
     const harkinsDirectTheaters = [];
+    let amcDirectError = null; // captured for debug output when discovery returns 0
     await Promise.all([
       // Regal: proxy-fetched theater list
       wantChain("regal")
@@ -681,11 +682,16 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                   if (dMin <= Number(radiusMin)) amcDirectTheaters.push({ ...t, distanceMin: dMin });
                 }
                 console.error(
-                  `AMC direct: ${amcDirectTheaters.length} theaters in ${state} within ${radiusMin}min` +
+                  `AMC direct: ${stateAmcTheaters.length} theaters in ${state} total, ` +
+                  `${amcDirectTheaters.length} within ${radiusMin}min` +
                   (amcDirectTheaters.length ? ": " + amcDirectTheaters.map((t) => t.name).join(", ") : "")
                 );
+                amcDirectError = amcDirectError || `${stateAmcTheaters.length} theaters in ${state}, ${amcDirectTheaters.length} in range`;
               })
-              .catch((err) => console.error(`AMC direct: ${state} theater list fetch failed:`, err.message));
+              .catch((err) => {
+                amcDirectError = err.message;
+                console.error(`AMC direct: ${state} theater list fetch failed:`, err.message);
+              });
           })()
         : Promise.resolve(),
 
@@ -826,6 +832,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           osmTheaters: theatersInRangeAll.map((t) => t.name),
           regalDirect: regalDirectTheaters.length,
           amcDirect: amcDirectTheaters.length,
+          amcDirectStatus: amcDirectError,
           harkinsDirect: harkinsDirectTheaters.length,
           cinemarkDirect: cinemarkDirectTheaters.length,
         },
