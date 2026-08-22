@@ -16,6 +16,7 @@ function regalDisplayNameFor(entry) { return (entry != null && typeof entry === 
 // chain's official branding. Keyed by normalized OSM name.
 const THEATER_DISPLAY_NAMES = {
   "AMC 16 Galleria at Tyler": "AMC Tyler Galleria 16",
+  "New Vision Theatres Tilghman Square 8": "AMC Tilghman Square 8",
 };
 const EXCLUDED_THEATERS = require("./lib/excluded-theaters");
 const { getPricedShowtimes: getAmcPricedShowtimes } = require("./lib/priceAdapters/amc-official");
