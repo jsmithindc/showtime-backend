@@ -1,5 +1,5 @@
 // One-time (or occasional re-run) crawler that builds a complete
-// California Cinemark theater list: {id, name, lat, lng}.
+// NATIONWIDE Cinemark theater list: {id, name, lat, lng}.
 //
 // Technique confirmed live against real pages during development:
 // - https://www.cinemark.com/full-theatre-list gave every theater's
@@ -13,76 +13,30 @@
 //   Century Arden XD and SCREENX (id 1137), both matched previously
 //   confirmed real IDs from live DevTools captures
 //
-// This script re-fetches all ~52 CA theater pages (as of when this was
-// written -- Cinemark opens/closes locations over time, so re-running
-// occasionally is reasonable), extracts each TheaterId + address, and
-// geocodes the address via lib/geocode.js (Nominatim) to get lat/lng.
+// This script fetches all ~306 theater slugs from the full-theatre-list
+// page automatically, then fetches each individual theater page to
+// extract its TheaterId + address, and geocodes the address via
+// lib/geocode.js (Nominatim) to get lat/lng. Takes ~6 minutes at the
+// polite 1.2s delay between requests.
 //
 // Usage: node scripts/build-cinemark-theater-map.js
-// Writes: lib/cinemark-theaters-ca.js
+// Writes: lib/cinemark-theaters.js (nationwide, replaces the old CA-only file)
 
 const fetch = require("node-fetch");
 const fs = require("fs");
 const path = require("path");
 const { geocodeForward } = require("../lib/geocode");
 
-// Extracted directly from https://www.cinemark.com/full-theatre-list's CA
-// section during development. Update this list if theaters open/close.
-const CA_THEATER_SLUGS = [
-  "ca-apple-valley/cinemark-jess-ranch-and-screenx",
-  "ca-carson/cinemark-carson-xd-and-screenx",
-  "ca-chico/cinemark-tinseltown-chico-14-and-xd",
-  "ca-daly-city/cinemark-century-daly-city-20-xd-and-imax",
-  "ca-downey/cinemark-downey-and-xd",
-  "ca-el-centro/cinemark-imperial-valley-mall-14",
-  "ca-elk-grove/cinemark-century-laguna-16-and-xd",
-  "ca-folsom/cinemark-century-folsom-14",
-  "ca-fremont/cinemark-century-at-pacific-commons-and-xd",
-  "ca-hanford/cinemark-hanford-movies-8",
-  "ca-hayward/cinemark-century-at-hayward",
-  "ca-hayward/cinemark-century-southland-mall",
-  "ca-huntington-beach/cinemark-century-huntington-beach-and-xd",
-  "ca-la-quinta/cinemark-century-la-quinta-xd-and-screenx",
-  "ca-lancaster/cinemark-lancaster-imax-and-screenx",
-  "ca-long-beach/cinemark-at-the-pike-outlets-and-xd",
-  "ca-los-angeles/cinemark-baldwin-hills-crenshaw-and-xd",
-  "ca-los-angeles/cinemark-howard-hughes-los-angeles-and-xd",
-  "ca-marina/cinemark-century-marina-and-xd",
-  "ca-milpitas/cinemark-century-great-mall-20-xd-and-screenx",
-  "ca-monterey/cinemark-century-monterey-13",
-  "ca-mountain-view/cinemark-century-mountain-view-16",
-  "ca-napa/cinemark-century-napa-valley-and-xd",
-  "ca-north-hollywood/cinemark-century-north-hollywood-and-xd",
-  "ca-novato/cinemark-century-rowland-plaza",
-  "ca-orange/cinemark-century-orange-xd-and-screenx",
-  "ca-oxnard/cinemark-century-riverpark-and-xd",
-  "ca-palmdale/cinemark-antelope-valley-mall",
-  "ca-playa-vista/cinemark-playa-vista-and-xd",
-  "ca-pleasant-hill/cinemark-century-downtown-pleasant-hill-16-and-xd",
-  "ca-rancho-mirage/cinemark-century-at-the-river-and-xd",
-  "ca-redding/cinemark-redding-14-and-xd",
-  "ca-redwood-city/cinemark-century-redwood-downtown-20-and-xd",
-  "ca-rialto/cinemark-bistro-renaissance-marketplace-xd-and-screenx",
-  "ca-richmond/cinemark-century-hilltop-16",
-  "ca-rocklin/cinemark-century-blue-oaks-theatres-and-xd",
-  "ca-roseville/cinemark-roseville-galleria-mall-and-xd",
-  "ca-sacramento/cinemark-century-doco-and-xd",
-  "ca-sacramento/cinemark-century-greenback-lane-16-and-xd",
-  "ca-sacramento/cinemark-century-arden-xd-and-screenx",
-  "ca-salinas/cinemark-century-northridge-mall-14",
-  "ca-san-bruno/cinemark-century-at-tanforan-and-xd",
-  "ca-san-jose/cinemark-cinearts-santana-row",
-  "ca-san-jose/cinemark-century-oakridge-20-xd-and-screenx",
-  "ca-san-leandro/cinemark-century-bayfair-mall-16",
-  "ca-san-mateo/cinemark-century-san-mateo-12",
-  "ca-tracy/cinemark-tracy-14",
-  "ca-union-city/cinemark-century-union-landing-25-and-xd",
-  "ca-vallejo/cinemark-century-vallejo-14",
-  "ca-ventura/cinemark-century-ventura-downtown-10",
-  "ca-victorville/cinemark-victorville-16-and-xd",
-  "ca-walnut-creek/cinemark-century-walnut-creek-14-and-xd",
-  "ca-yuba-city/cinemark-yuba-city",
-];
+async function fetchAllSlugs() {
+  const res = await fetch("https://www.cinemark.com/full-theatre-list", { headers: HEADERS });
+  if (!res.ok) throw new Error(`full-theatre-list fetch failed: ${res.status}`);
+  const html = await res.text();
+  // Every theater link looks like href="/theatres/state-city/theater-slug"
+  const matches = [...html.matchAll(/href="\/theatres\/([\w-]+\/[\w-]+)"/g)];
+  const slugs = [...new Set(matches.map((m) => m[1]))];
+  if (slugs.length === 0) throw new Error("No theater slugs found -- page structure may have changed");
+  return slugs;
+}
 
 const HEADERS = {
   "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
@@ -144,9 +98,16 @@ function extractAddressFromJsonLd(html) {
   return null;
 }
 
-async function fetchTheaterInfo(slug) {
+async function fetchTheaterInfo(slug, attempt = 1) {
   const url = `https://www.cinemark.com/theatres/${slug}`;
   const res = await fetch(url, { headers: HEADERS });
+  if (res.status === 429) {
+    if (attempt >= 3) throw new Error(`429 Too Many Requests (gave up after ${attempt} attempts)`);
+    const wait = 15000 * attempt;
+    console.log(`  429 on ${slug}, waiting ${wait / 1000}s before retry ${attempt + 1}...`);
+    await sleep(wait);
+    return fetchTheaterInfo(slug, attempt + 1);
+  }
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText}`);
   }
@@ -244,10 +205,29 @@ async function fetchTheaterInfo(slug) {
 }
 
 async function main() {
-  const results = [];
+  console.log("Fetching full theater list from cinemark.com...");
+  const allSlugs = await fetchAllSlugs();
+  console.log(`Found ${allSlugs.length} theater slugs.`);
+
+  // Resume from existing output if present -- skip slugs we already have
+  const outPath = path.join(__dirname, "..", "lib", "cinemark-theaters.js");
+  let results = [];
+  const alreadyDone = new Set();
+  if (fs.existsSync(outPath)) {
+    try {
+      const existing = require(outPath);
+      results = existing.filter((t) => t.slug);
+      for (const t of results) alreadyDone.add(t.slug);
+      console.log(`Resuming -- ${results.length} already done, ${allSlugs.length - alreadyDone.size} remaining.\n`);
+    } catch { /* fresh run */ }
+  } else {
+    console.log(`Starting fresh...\n`);
+  }
+
+  const slugsToFetch = allSlugs.filter((s) => !alreadyDone.has(s));
   const failures = [];
 
-  for (const slug of CA_THEATER_SLUGS) {
+  for (const slug of slugsToFetch) {
     try {
       const info = await fetchTheaterInfo(slug);
       let geo;
@@ -285,12 +265,17 @@ async function main() {
       console.error(`FAILED: ${slug} -- ${err.message}`);
       failures.push(slug);
     }
-    // Be polite to both Cinemark and Nominatim -- no need to hammer
-    // either, this only needs to run occasionally.
-    await sleep(1200);
+    // Write progress after every theater so a restart can resume.
+    const progressContent =
+      "// Auto-generated by scripts/build-cinemark-theater-map.js -- do not hand-edit.\n" +
+      "// Re-run that script to refresh (theaters open/close over time).\n" +
+      `// Generated: ${new Date().toISOString()} (in progress)\n` +
+      `module.exports = ${JSON.stringify(results, null, 2)};\n`;
+    fs.writeFileSync(outPath, progressContent);
+    // Be polite to both Cinemark and Nominatim.
+    await sleep(2500);
   }
 
-  const outPath = path.join(__dirname, "..", "lib", "cinemark-theaters-ca.js");
   const fileContent =
     "// Auto-generated by scripts/build-cinemark-theater-map.js -- do not hand-edit.\n" +
     "// Re-run that script to refresh (theaters open/close over time).\n" +
