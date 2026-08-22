@@ -642,59 +642,68 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       return !wantedChains || wantedChains.includes(name);
     }
 
-    // Regal direct discovery: same approach as AMC and Harkins -- use
-    // Regal's own theater list (regmovies.com/api/theatres, fetched via
-    // the proxy since regmovies.com is Cloudflare-protected) rather than
-    // OSM name-matching. Returns { code, name, lat, lng } for all 400+
-    // Regal locations nationwide; filter to search radius here.
+    // Regal, AMC, and Harkins direct discovery -- run in parallel so a
+    // slow Regal proxy call (regmovies.com is Cloudflare-protected and
+    // goes through the proxy chain) doesn't block AMC or Harkins results.
     const regalDirectTheaters = [];
-    if (wantChain("regal")) {
-      try {
-        const allRegal = await getRegalTheaters();
-        for (const t of allRegal) {
-          const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
-          if (dMin <= Number(radiusMin)) {
-            regalDirectTheaters.push({ ...t, distanceMin: dMin });
-          }
-        }
-        console.error(
-          `Regal direct: ${regalDirectTheaters.length} theaters within ${radiusMin}min` +
-          (regalDirectTheaters.length ? ": " + regalDirectTheaters.map((t) => `${t.name} (${t.code})`).join(", ") : "")
-        );
-      } catch (err) {
-        console.error("Regal direct: theater list fetch failed:", err.message);
-      }
-    }
-
-    // AMC direct discovery: fetch AMC's own theater list for the user's
-    // state, then filter to theaters within the search radius. This
-    // completely bypasses OSM/Geoapify for AMC -- we no longer try to
-    // match OSM theater names to AMC IDs (unreliable: stale names,
-    // wrong coordinates, rebrands). AMC's API is the authoritative
-    // source for which AMC theaters exist and where they are.
     const amcDirectTheaters = [];
-    if (wantChain("amc")) {
-      const state = latLngToUsState(originLat, originLng);
-      if (state) {
-        try {
-          const stateAmcTheaters = await getAmcTheatersByState(state);
-          for (const t of stateAmcTheaters) {
-            const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
-            if (dMin <= Number(radiusMin)) {
-              amcDirectTheaters.push({ ...t, distanceMin: dMin });
+    const harkinsDirectTheaters = [];
+    await Promise.all([
+      // Regal: proxy-fetched theater list
+      wantChain("regal")
+        ? getRegalTheaters()
+            .then((allRegal) => {
+              for (const t of allRegal) {
+                const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+                if (dMin <= Number(radiusMin)) regalDirectTheaters.push({ ...t, distanceMin: dMin });
+              }
+              console.error(
+                `Regal direct: ${regalDirectTheaters.length} theaters within ${radiusMin}min` +
+                (regalDirectTheaters.length ? ": " + regalDirectTheaters.map((t) => `${t.name} (${t.code})`).join(", ") : "")
+              );
+            })
+            .catch((err) => console.error("Regal direct: theater list fetch failed:", err.message))
+        : Promise.resolve(),
+
+      // AMC: state-scoped theater list
+      wantChain("amc")
+        ? (() => {
+            const state = latLngToUsState(originLat, originLng);
+            if (!state) {
+              console.error(`AMC direct: could not determine US state for (${originLat}, ${originLng})`);
+              return Promise.resolve();
             }
-          }
-          console.error(
-            `AMC direct: ${amcDirectTheaters.length} theaters in ${state} within ${radiusMin}min` +
-            (amcDirectTheaters.length ? ": " + amcDirectTheaters.map((t) => t.name).join(", ") : "")
-          );
-        } catch (err) {
-          console.error(`AMC direct: ${state} theater list fetch failed:`, err.message);
-        }
-      } else {
-        console.error(`AMC direct: could not determine US state for (${originLat}, ${originLng})`);
-      }
-    }
+            return getAmcTheatersByState(state)
+              .then((stateAmcTheaters) => {
+                for (const t of stateAmcTheaters) {
+                  const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+                  if (dMin <= Number(radiusMin)) amcDirectTheaters.push({ ...t, distanceMin: dMin });
+                }
+                console.error(
+                  `AMC direct: ${amcDirectTheaters.length} theaters in ${state} within ${radiusMin}min` +
+                  (amcDirectTheaters.length ? ": " + amcDirectTheaters.map((t) => t.name).join(", ") : "")
+                );
+              })
+              .catch((err) => console.error(`AMC direct: ${state} theater list fetch failed:`, err.message));
+          })()
+        : Promise.resolve(),
+
+      // Harkins: nationwide theater list
+      wantChain("harkins")
+        ? getHarkinsTheaters()
+            .then((allHarkins) => {
+              for (const t of allHarkins) {
+                const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+                if (dMin <= Number(radiusMin)) harkinsDirectTheaters.push({ ...t, distanceMin: dMin });
+              }
+              console.error(
+                `Harkins direct: ${harkinsDirectTheaters.length} theaters within ${radiusMin}min` +
+                (harkinsDirectTheaters.length ? ": " + harkinsDirectTheaters.map((t) => t.name).join(", ") : "")
+              );
+            })
+            .catch((err) => console.error("Harkins direct: theater list fetch failed:", err.message))
+        : Promise.resolve(),
+    ]);
 
     const cinemarkResolvedIds = {};
     if (wantChain("cinemark")) {
@@ -740,29 +749,6 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         if (CINEMAWEST_THEATER_MAP[t.name] != null) {
           cinemaWestResolvedTheaters[t.name] = CINEMAWEST_THEATER_MAP[t.name];
         }
-      }
-    }
-
-    // Harkins direct discovery: same approach as AMC -- use Harkins'
-    // own theater list (ticketingservice.harkins.com/api/Theatre/GetTheatres)
-    // rather than OSM name-matching. Returns { harkinsId, cinemaId, name,
-    // lat, lng } for all ~32 Harkins locations; filter to search radius.
-    const harkinsDirectTheaters = [];
-    if (wantChain("harkins")) {
-      try {
-        const allHarkins = await getHarkinsTheaters();
-        for (const t of allHarkins) {
-          const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
-          if (dMin <= Number(radiusMin)) {
-            harkinsDirectTheaters.push({ ...t, distanceMin: dMin });
-          }
-        }
-        console.error(
-          `Harkins direct: ${harkinsDirectTheaters.length} theaters within ${radiusMin}min` +
-          (harkinsDirectTheaters.length ? ": " + harkinsDirectTheaters.map((t) => t.name).join(", ") : "")
-        );
-      } catch (err) {
-        console.error("Harkins direct: theater list fetch failed:", err.message);
       }
     }
 
