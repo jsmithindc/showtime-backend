@@ -590,27 +590,113 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       : null;
 
   try {
-    // ---- Phase 1: broad, free theater discovery (OpenStreetMap) ----
     const radiusMeters = minutesToMeters(Number(radiusMin));
-    const nearbyTheaters = await findNearbyTheaters({
-      lat: originLat,
-      lng: originLng,
-      radiusMeters,
-    });
+    // Chain discoveries use a slightly generous radius to absorb geocoding
+    // imprecision and formula rounding -- a theater the formula puts at
+    // 20.3min is almost certainly driveable within the stated 20min limit.
+    const discoveryRadiusMin = Number(radiusMin) * 1.15;
 
-    // Resolve once per search, not once per theater -- SerpApi rejects
-    // location strings it doesn't recognize verbatim (see
-    // lib/serpapi-location.js), so translate whatever the caller typed
-    // into the exact canonical form before it's used in any theater call.
+    function wantChain(name) {
+      return !wantedChains || wantedChains.includes(name);
+    }
+
+    // All three discovery branches are side-effect-only (they push into
+    // arrays declared here). Declared before the parallel block so they're
+    // in scope for both the Promise.all and the rest of the handler.
+    const regalDirectTheaters = [];
+    const amcDirectTheaters = [];
+    const harkinsDirectTheaters = [];
+    let amcDirectError = null;
+
+    // ---- Phase 1: broad theater discovery -- run everything in parallel ----
+    // Overpass, SerpApi location resolution, and all chain direct discoveries
+    // only share originLat/originLng (already known). None of them depend on
+    // each other's output, so they can all start simultaneously.
+    const [nearbyTheaters, locationResult] = await Promise.all([
+      // Overpass OSM theater search
+      findNearbyTheaters({ lat: originLat, lng: originLng, radiusMeters }),
+
+      // SerpApi canonical location string (needed for SerpApi fallback only)
+      resolveCanonicalLocation(location)
+        .then((r) => ({ ok: true, value: r }))
+        .catch((err) => ({ ok: false, err: err.message })),
+
+      // Regal: proxy-fetched theater list
+      wantChain("regal")
+        ? getRegalTheaters()
+            .then((allRegal) => {
+              for (const t of allRegal) {
+                const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+                if (dMin <= discoveryRadiusMin) regalDirectTheaters.push({ ...t, distanceMin: dMin });
+              }
+              console.error(
+                `Regal direct: ${regalDirectTheaters.length} theaters within ${radiusMin}min` +
+                (regalDirectTheaters.length ? ": " + regalDirectTheaters.map((t) => `${t.name} (${t.code})`).join(", ") : "")
+              );
+            })
+            .catch((err) => console.error("Regal direct: theater list fetch failed:", err.message))
+        : Promise.resolve(),
+
+      // AMC: all matching states (bounding boxes overlap in the northeast)
+      wantChain("amc")
+        ? (() => {
+            const states = latLngToUsStates(originLat, originLng);
+            if (states.length === 0) {
+              console.error(`AMC direct: could not determine US state for (${originLat}, ${originLng})`);
+              return Promise.resolve();
+            }
+            const seenAmcIds = new Set();
+            return Promise.all(
+              states.map((state) =>
+                getAmcTheatersByState(state)
+                  .then((stateTheaters) => {
+                    let addedFromState = 0;
+                    for (const t of stateTheaters) {
+                      if (seenAmcIds.has(t.id)) continue;
+                      seenAmcIds.add(t.id);
+                      const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+                      if (dMin <= discoveryRadiusMin) {
+                        amcDirectTheaters.push({ ...t, distanceMin: dMin });
+                        addedFromState++;
+                      }
+                    }
+                    console.error(`AMC direct: ${stateTheaters.length} theaters in ${state}, ${addedFromState} in range`);
+                    amcDirectError = amcDirectError || `checked ${states.join("+")}`;
+                  })
+                  .catch((err) => {
+                    amcDirectError = err.message;
+                    console.error(`AMC direct: ${state} theater list fetch failed:`, err.message);
+                  })
+              )
+            );
+          })()
+        : Promise.resolve(),
+
+      // Harkins: nationwide theater list
+      wantChain("harkins")
+        ? getHarkinsTheaters()
+            .then((allHarkins) => {
+              for (const t of allHarkins) {
+                const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+                if (dMin <= discoveryRadiusMin) harkinsDirectTheaters.push({ ...t, distanceMin: dMin });
+              }
+              console.error(
+                `Harkins direct: ${harkinsDirectTheaters.length} theaters within ${radiusMin}min` +
+                (harkinsDirectTheaters.length ? ": " + harkinsDirectTheaters.map((t) => t.name).join(", ") : "")
+              );
+            })
+            .catch((err) => console.error("Harkins direct: theater list fetch failed:", err.message))
+        : Promise.resolve(),
+    ]);
+
+    // Unpack location result (was a try/catch, now wrapped in Promise)
     let resolvedLocation = location;
     let locationResolutionError = null;
-    try {
-      resolvedLocation = await resolveCanonicalLocation(location);
-    } catch (err) {
-      locationResolutionError = err.message;
-      console.error(`Location resolution failed for "${location}":`, err.message);
-      // Fall through and try the raw string anyway -- worst case SerpApi
-      // rejects it with the same clear error as before.
+    if (!locationResult.ok) {
+      locationResolutionError = locationResult.err;
+      console.error(`Location resolution failed for "${location}":`, locationResult.err);
+    } else {
+      resolvedLocation = locationResult.value;
     }
 
     const theatersInRange = nearbyTheaters
@@ -636,102 +722,8 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       });
     }
 
-    // ---- Early chain resolution, BEFORE any SerpApi calls ----
-    // Moved forward from what used to be Phases 3-6 (Regal/AMC/Cinemark/
-    // Cinema West each independently recomputed this after already
-    // spending a SerpApi call on every theater in range, including ones
-    // we were about to throw away). Resolution only needs theatersInRange
-    // (lat/lng + static maps + proximity auto-lookup) -- it has no
-    // dependency on SerpApi data, so there's no reason it can't happen
-    // first and filter theatersInRange BEFORE Phase 2 spends any quota.
-    //
-    // Deliberately NOT gated behind each chain's own pricing-disabled
-    // flag -- a theater still counts as "ours" for filtering purposes
-    // even while that chain's pricing is paused (e.g. Regal theaters
-    // should still show up, just unpriced, while DISABLE_REGAL_PRICING
-    // is true). Only the actual pricing calls later respect those flags.
-    function wantChain(name) {
-      return !wantedChains || wantedChains.includes(name);
-    }
-
-    // Regal, AMC, and Harkins direct discovery -- run in parallel so a
-    // slow Regal proxy call (regmovies.com is Cloudflare-protected and
-    // goes through the proxy chain) doesn't block AMC or Harkins results.
-    const regalDirectTheaters = [];
-    const amcDirectTheaters = [];
-    const harkinsDirectTheaters = [];
-    let amcDirectError = null; // captured for debug output when discovery returns 0
-    await Promise.all([
-      // Regal: proxy-fetched theater list
-      wantChain("regal")
-        ? getRegalTheaters()
-            .then((allRegal) => {
-              for (const t of allRegal) {
-                const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
-                if (dMin <= Number(radiusMin)) regalDirectTheaters.push({ ...t, distanceMin: dMin });
-              }
-              console.error(
-                `Regal direct: ${regalDirectTheaters.length} theaters within ${radiusMin}min` +
-                (regalDirectTheaters.length ? ": " + regalDirectTheaters.map((t) => `${t.name} (${t.code})`).join(", ") : "")
-              );
-            })
-            .catch((err) => console.error("Regal direct: theater list fetch failed:", err.message))
-        : Promise.resolve(),
-
-      // AMC: state-scoped theater list. Check ALL states whose bounding box
-      // contains the search point -- bounding boxes overlap in the dense
-      // northeast (NY/NJ/PA especially), so a single-state lookup often
-      // fetches the wrong state's theaters entirely.
-      wantChain("amc")
-        ? (() => {
-            const states = latLngToUsStates(originLat, originLng);
-            if (states.length === 0) {
-              console.error(`AMC direct: could not determine US state for (${originLat}, ${originLng})`);
-              return Promise.resolve();
-            }
-            const seenAmcIds = new Set();
-            return Promise.all(
-              states.map((state) =>
-                getAmcTheatersByState(state)
-                  .then((stateTheaters) => {
-                    let addedFromState = 0;
-                    for (const t of stateTheaters) {
-                      if (seenAmcIds.has(t.id)) continue;
-                      seenAmcIds.add(t.id);
-                      const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
-                      if (dMin <= Number(radiusMin)) {
-                        amcDirectTheaters.push({ ...t, distanceMin: dMin });
-                        addedFromState++;
-                      }
-                    }
-                    console.error(`AMC direct: ${stateTheaters.length} theaters in ${state}, ${addedFromState} in range`);
-                    amcDirectError = amcDirectError || `checked ${states.join("+")}`;
-                  })
-                  .catch((err) => {
-                    amcDirectError = err.message;
-                    console.error(`AMC direct: ${state} theater list fetch failed:`, err.message);
-                  })
-              )
-            );
-          })()
-        : Promise.resolve(),
-
-      // Harkins: nationwide theater list
-      wantChain("harkins")
-        ? getHarkinsTheaters()
-            .then((allHarkins) => {
-              for (const t of allHarkins) {
-                const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
-                if (dMin <= Number(radiusMin)) harkinsDirectTheaters.push({ ...t, distanceMin: dMin });
-              }
-              console.error(
-                `Harkins direct: ${harkinsDirectTheaters.length} theaters within ${radiusMin}min` +
-                (harkinsDirectTheaters.length ? ": " + harkinsDirectTheaters.map((t) => t.name).join(", ") : "")
-              );
-            })
-            .catch((err) => console.error("Harkins direct: theater list fetch failed:", err.message))
-        : Promise.resolve(),
-    ]);
+    // ---- Chain resolution from OSM results (Cinemark/CinemaWest/Regency) ----
+    // Regal/AMC/Harkins already discovered above in the parallel Phase 1 block.
 
     // AMC static-map fallback: if the live API call failed (key missing,
     // network error, etc.) and left amcDirectTheaters empty, fall back to
@@ -762,7 +754,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         const allCinemark = require("./lib/cinemark-theaters");
         for (const t of allCinemark) {
           const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
-          if (dMin <= Number(radiusMin)) {
+          if (dMin <= discoveryRadiusMin) {
             cinemarkDirectTheaters.push({ ...t, distanceMin: dMin });
           }
         }
