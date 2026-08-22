@@ -377,7 +377,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.2</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.7</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -775,13 +775,14 @@
     // ONCE here before firing both /api/search and /api/search-regal.
     // Without this, both backend calls geocode the same place in parallel,
     // racing to Nominatim and triggering 429s on Render's shared IP range.
-    let resolvedLat = lat, resolvedLng = lng;
+    let resolvedLat = lat, resolvedLng = lng, resolvedLocation = null;
     if ((!lat || !lng) && place) {
       try {
         const geo = await fetch(`/api/geocode?place=${encodeURIComponent(place)}`).then((r) => r.json());
         if (geo.error) throw new Error(geo.error);
         resolvedLat = String(geo.lat);
         resolvedLng = String(geo.lng);
+        resolvedLocation = geo.locationLabel;
       } catch (err) {
         els.banners.innerHTML = `<div class="banner error">Couldn't find location "${place}": ${err.message}</div>`;
         els.searchBtn.disabled = false;
@@ -791,10 +792,12 @@
     }
 
     // Rebuild params using resolved coordinates so both calls below send
-    // lat/lng and neither has to geocode again.
+    // lat/lng and neither has to geocode again. Also pass the locationLabel
+    // so the backend doesn't need to re-geocode to get it for SerpApi.
     params.delete('place');
     params.set('lat', resolvedLat);
     params.set('lng', resolvedLng);
+    if (resolvedLocation) params.set('location', resolvedLocation);
 
     // Regal split out into its own request (see /api/search-regal) --
     // its retry-with-delays logic can make it noticeably slower than
