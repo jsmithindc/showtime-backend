@@ -366,6 +366,51 @@ function latLngToUsStates(lat, lng) {
     .map(([state]) => state);
 }
 
+// Maps US state abbreviations to IANA timezone identifiers. Multi-timezone
+// states (e.g. IN, KY, TN, ID) are assigned their dominant/majority zone.
+// Used to convert a UTC timestamp into local-time minutes for the
+// "already started" filter, so users in one timezone searching theaters
+// in another get the correct local theater time rather than their own.
+const STATE_TIMEZONE = {
+  AK: "America/Anchorage", AL: "America/Chicago", AR: "America/Chicago",
+  AZ: "America/Phoenix",   CA: "America/Los_Angeles", CO: "America/Denver",
+  CT: "America/New_York",  DC: "America/New_York",  DE: "America/New_York",
+  FL: "America/New_York",  GA: "America/New_York",  HI: "Pacific/Honolulu",
+  IA: "America/Chicago",   ID: "America/Denver",    IL: "America/Chicago",
+  IN: "America/Indiana/Indianapolis", KS: "America/Chicago", KY: "America/New_York",
+  LA: "America/Chicago",   MA: "America/New_York",  MD: "America/New_York",
+  ME: "America/New_York",  MI: "America/Detroit",   MN: "America/Chicago",
+  MO: "America/Chicago",   MS: "America/Chicago",   MT: "America/Denver",
+  NC: "America/New_York",  ND: "America/Chicago",   NE: "America/Chicago",
+  NH: "America/New_York",  NJ: "America/New_York",  NM: "America/Denver",
+  NV: "America/Los_Angeles", NY: "America/New_York", OH: "America/New_York",
+  OK: "America/Chicago",   OR: "America/Los_Angeles", PA: "America/New_York",
+  RI: "America/New_York",  SC: "America/New_York",  SD: "America/Chicago",
+  TN: "America/Chicago",   TX: "America/Chicago",   UT: "America/Denver",
+  VA: "America/New_York",  VT: "America/New_York",  WA: "America/Los_Angeles",
+  WI: "America/Chicago",   WV: "America/New_York",  WY: "America/Denver",
+};
+
+function getTimezoneForLocation(lat, lng) {
+  const state = latLngToUsState(lat, lng);
+  return (state && STATE_TIMEZONE[state]) || "America/New_York"; // Eastern as safe default
+}
+
+// Returns minutes since midnight in the given IANA timezone for a UTC timestamp.
+function nowMinutesInZone(timestampMs, timezone) {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(new Date(timestampMs)).map((p) => [p.type, p.value]));
+  const h = parseInt(parts.hour, 10);
+  const m = parseInt(parts.minute, 10);
+  // Intl formats midnight as "24:00" in some environments -- normalize.
+  return (h === 24 ? 0 : h) * 60 + m;
+}
+
 // CONFIRMED REAL BUG, found from a live report: two real IMAX showings
 // (AMC Orange 30, AMC Norwalk 20) never appeared in results despite
 // being genuinely bookable. Root cause confirmed directly from an
@@ -527,7 +572,7 @@ function todayISOLocal() {
 }
 
 app.get("/api/search", searchRateLimiter, async (req, res) => {
-  const { movie, radiusMin, deadline, formats, chains, date, debug, debugSerpApi } = req.query;
+  const { movie, radiusMin, deadline, formats, chains, date, clientTime, debug, debugSerpApi } = req.query;
   let { lat, lng, location, place } = req.query;
 
   if (!movie || !radiusMin || !deadline) {
@@ -577,14 +622,23 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
   // relative to the current clock when searching today. For a future
   // date, every time of day is still available -- there's no "already
   // started" to filter out, so treat the current-time floor as 0.
-  const nowMinutes = isToday ? now.getHours() * 60 + now.getMinutes() : 0;
+  // Use the client's UTC timestamp (clientTime) + the theater location's
+  // timezone to compute local time at the theaters. Render runs UTC;
+  // server getHours() is UTC, which is 4-5 hours ahead of Eastern US
+  // theaters and wrongly filters shows that haven't started yet.
+  // nowMinutes is resolved lazily after originLat/Lng are known.
   const originLat = Number(lat);
   const originLng = Number(lng);
+
+  // Compute nowMinutes in the theater's local timezone, not the server's UTC.
+  const theaterTimezone = getTimezoneForLocation(originLat, originLng);
+  const clientTimestampMs = clientTime ? Number(clientTime) : Date.now();
+  const nowMinutes = isToday ? nowMinutesInZone(clientTimestampMs, theaterTimezone) : 0;
 
   const timeWindowWarning =
     isToday && deadlineMinutes <= nowMinutes
       ? `Heads up: your deadline (${deadline}) is not after the current time ` +
-        `on this machine (${now.getHours()}:${String(now.getMinutes()).padStart(2, "0")}). ` +
+        `in the theater's timezone (${theaterTimezone}). ` +
         `Every showing will be filtered out as "already started" or "ends too late" ` +
         `-- that's very likely why matchingShowings is 0. Try a later deadline.`
       : null;
@@ -2111,7 +2165,7 @@ app.get("/api/movies", searchRateLimiter, async (req, res) => {
 // code with the main handler, to avoid any risk of destabilizing the
 // working main endpoint while extracting this.
 app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
-  const { movie, radiusMin, deadline, formats, date } = req.query;
+  const { movie, radiusMin, deadline, formats, date, clientTime } = req.query;
   let { lat, lng, location, place } = req.query;
 
   // Same diagnostic as the boot-time log, repeated here so it's visible
@@ -2145,9 +2199,11 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
   const isToday = searchDateISO === todayISO;
   const wantedFormats = formats ? formats.split(",").map((f) => f.toLowerCase()) : null;
   const deadlineMinutes = toMinutesSinceMidnight(deadline);
-  const nowMinutes = isToday ? now.getHours() * 60 + now.getMinutes() : 0;
   const originLat = Number(lat);
   const originLng = Number(lng);
+  const theaterTimezone = getTimezoneForLocation(originLat, originLng);
+  const clientTimestampMs = clientTime ? Number(clientTime) : Date.now();
+  const nowMinutes = isToday ? nowMinutesInZone(clientTimestampMs, theaterTimezone) : 0;
 
   try {
     const radiusMeters = minutesToMeters(Number(radiusMin));
