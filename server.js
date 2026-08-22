@@ -2152,7 +2152,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     const regalResolvedIds = {};
     for (const t of theatersInRange) {
       if (REGAL_CINEMA_MAP[t.name] != null) {
-        regalResolvedIds[t.name] = REGAL_CINEMA_MAP[t.name];
+        regalResolvedIds[t.name] = regalCodeFor(REGAL_CINEMA_MAP[t.name]);
       }
     }
     const unmappedRegalInRange = theatersInRange.filter((t) => regalResolvedIds[t.name] == null);
