@@ -20,7 +20,6 @@ const THEATER_DISPLAY_NAMES = {
 };
 const EXCLUDED_THEATERS = require("./lib/excluded-theaters");
 const { getPricedShowtimes: getAmcPricedShowtimes } = require("./lib/priceAdapters/amc-official");
-const AMC_THEATRE_MAP = require("./lib/amc-theatre-map");
 const { getAmcTheatersByState, findClosestAmcTheater } = require("./lib/amc-theaters-by-state");
 const {
   getShowtimesForMovie: getCinemarkShowtimesForMovie,
@@ -30,7 +29,7 @@ const CINEMARK_THEATER_MAP = require("./lib/cinemark-theater-map");
 const CINEMARK_MOVIE_MAP = require("./lib/cinemark-movie-map");
 const CINEMAWEST_THEATER_MAP = require("./lib/cinemawest-theater-map");
 const { getShowtimesForSite: getCinemaWestShowtimes, getTicketPricing: getCinemaWestTicketPricing, getFreshTokenCached: getCinemaWestFreshToken } = require("./lib/priceAdapters/cinemawest-official");
-const HARKINS_THEATER_MAP = require("./lib/harkins-theater-map");
+const { getHarkinsTheaters } = require("./lib/harkins-theaters");
 const { getShowtimesForMovie: getHarkinsShowtimesForMovie, getTicketPricing: getHarkinsTicketPricing, getRuntimeForMovie: getHarkinsRuntimeForMovie } = require("./lib/priceAdapters/harkins-official");
 const REGENCY_THEATER_MAP = require("./lib/regency-theater-map");
 const { getShowtimesForLocation: getRegencyShowtimesForLocation, getTicketPricing: getRegencyTicketPricing, getFilmIdMap: getRegencyFilmIdMap } = require("./lib/priceAdapters/regency-official");
@@ -683,64 +682,33 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       }
     }
 
-    const amcResolvedIds = {};
+    // AMC direct discovery: fetch AMC's own theater list for the user's
+    // state, then filter to theaters within the search radius. This
+    // completely bypasses OSM/Geoapify for AMC -- we no longer try to
+    // match OSM theater names to AMC IDs (unreliable: stale names,
+    // wrong coordinates, rebrands). AMC's API is the authoritative
+    // source for which AMC theaters exist and where they are.
+    const amcDirectTheaters = [];
     if (wantChain("amc")) {
-      for (const t of theatersInRange) {
-        if (AMC_THEATRE_MAP[t.name] != null) {
-          amcResolvedIds[t.name] = AMC_THEATRE_MAP[t.name];
-        }
-      }
-      const unmappedAmcInRange = theatersInRange.filter((t) => amcResolvedIds[t.name] == null);
-      if (unmappedAmcInRange.length > 0) {
-        // Group unmapped AMC-named theaters by US state so we fetch each
-        // state's theater list at most once (API call per state, cached).
-        const stateGroups = {};
-        for (const t of unmappedAmcInRange) {
-          if (!/\bamc\b/i.test(t.name)) {
-            // CONFIRMED REAL BUG, caught from a live report: distance-
-            // only matching wrongly paired "Laemmle Glendale" (a real,
-            // entirely separate art-house chain) and "Five Star Cinema"
-            // (reportedly no longer exists at all) with an unrelated AMC
-            // theater, purely because both happened to sit within the
-            // 0.3mi threshold in a dense shopping-district area (The
-            // Americana at Brand, which has multiple distinct venues
-            // close together). The threshold's own reasoning -- "0.3mi
-            // is almost certainly the same building" -- turned out
-            // false in exactly this kind of area. Real evidence from
-            // the same log: every CORRECT match already had "AMC" in
-            // its own OSM name; neither wrong match did. Requiring that
-            // signal before even attempting a distance match closes
-            // this specific failure mode without needing a smaller,
-            // riskier distance threshold that could reject genuine
-            // matches elsewhere.
-            console.error(
-              `AMC auto-match skipped: OSM theater "${t.name}" doesn't mention AMC in its own name -- ` +
-              `not attempting a distance-only match (see the comment above this line for why).`
-            );
-            continue;
-          }
-          const state = latLngToUsState(t.lat, t.lng);
-          if (!state) continue;
-          if (!stateGroups[state]) stateGroups[state] = [];
-          stateGroups[state].push(t);
-        }
-        for (const [state, theaters] of Object.entries(stateGroups)) {
-          try {
-            const stateAmcTheaters = await getAmcTheatersByState(state);
-            for (const t of theaters) {
-              const match = findClosestAmcTheater(t.lat, t.lng, stateAmcTheaters);
-              if (match) {
-                amcResolvedIds[t.name] = match.id;
-                console.error(
-                  `AMC auto-match: OSM theater "${t.name}" -> AMC theatre #${match.id} ` +
-                  `("${match.name}"), ${match.matchedDistanceMiles.toFixed(3)} mi apart`
-                );
-              }
+      const state = latLngToUsState(originLat, originLng);
+      if (state) {
+        try {
+          const stateAmcTheaters = await getAmcTheatersByState(state);
+          for (const t of stateAmcTheaters) {
+            const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+            if (dMin <= Number(radiusMin)) {
+              amcDirectTheaters.push({ ...t, distanceMin: dMin });
             }
-          } catch (err) {
-            console.error(`AMC ${state} theater list fetch failed:`, err.message);
           }
+          console.error(
+            `AMC direct: ${amcDirectTheaters.length} theaters in ${state} within ${radiusMin}min` +
+            (amcDirectTheaters.length ? ": " + amcDirectTheaters.map((t) => t.name).join(", ") : "")
+          );
+        } catch (err) {
+          console.error(`AMC direct: ${state} theater list fetch failed:`, err.message);
         }
+      } else {
+        console.error(`AMC direct: could not determine US state for (${originLat}, ${originLng})`);
       }
     }
 
@@ -791,12 +759,26 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       }
     }
 
-    const harkinsResolvedTheaters = {};
+    // Harkins direct discovery: same approach as AMC -- use Harkins'
+    // own theater list (ticketingservice.harkins.com/api/Theatre/GetTheatres)
+    // rather than OSM name-matching. Returns { harkinsId, cinemaId, name,
+    // lat, lng } for all ~32 Harkins locations; filter to search radius.
+    const harkinsDirectTheaters = [];
     if (wantChain("harkins")) {
-      for (const t of theatersInRange) {
-        if (HARKINS_THEATER_MAP[t.name] != null) {
-          harkinsResolvedTheaters[t.name] = HARKINS_THEATER_MAP[t.name];
+      try {
+        const allHarkins = await getHarkinsTheaters();
+        for (const t of allHarkins) {
+          const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+          if (dMin <= Number(radiusMin)) {
+            harkinsDirectTheaters.push({ ...t, distanceMin: dMin });
+          }
         }
+        console.error(
+          `Harkins direct: ${harkinsDirectTheaters.length} theaters within ${radiusMin}min` +
+          (harkinsDirectTheaters.length ? ": " + harkinsDirectTheaters.map((t) => t.name).join(", ") : "")
+        );
+      } catch (err) {
+        console.error("Harkins direct: theater list fetch failed:", err.message);
       }
     }
 
@@ -811,10 +793,12 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 
     const knownChainTheaterNames = new Set([
       ...Object.keys(regalResolvedIds),
-      ...Object.keys(amcResolvedIds),
+      // AMC theaters are discovered directly from AMC's own API (amcDirectTheaters),
+      // not from OSM, so there's no OSM-name set to add here.
       ...Object.keys(cinemarkResolvedIds),
       ...Object.keys(cinemaWestResolvedTheaters),
-      ...Object.keys(harkinsResolvedTheaters),
+      // Harkins theaters are discovered directly from Harkins' own API (harkinsDirectTheaters),
+      // not from OSM, so there's no OSM-name set to add here.
       ...Object.keys(regencyResolvedTheaters),
     ]);
     const theatersInRangeAll = theatersInRange; // kept for the raw discovery count in the response
@@ -848,10 +832,9 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     function chainsMatchingTheater(theaterName) {
       const chains = [];
       if (regalResolvedIds[theaterName] != null) chains.push("regal");
-      if (amcResolvedIds[theaterName] != null) chains.push("amc");
+      // AMC and Harkins are discovered separately via their own APIs, not via theatersInRange names
       if (cinemarkResolvedIds[theaterName] != null) chains.push("cinemark");
       if (cinemaWestResolvedTheaters[theaterName] != null) chains.push("cinemawest");
-      if (harkinsResolvedTheaters[theaterName] != null) chains.push("harkins");
       if (regencyResolvedTheaters[theaterName] != null) chains.push("regency");
       return chains;
     }
@@ -861,7 +844,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       return !chains.every((c) => CHAINS_WITH_NATIVE_DISCOVERY.has(c));
     });
 
-    if (theatersInRangeAll.length > 0 && knownChainTheaterNames.size === 0) {
+    if (theatersInRangeAll.length > 0 && knownChainTheaterNames.size === 0 && amcDirectTheaters.length === 0 && harkinsDirectTheaters.length === 0) {
       return res.json({
         movie,
         theatersFound: nearbyTheaters.length,
@@ -1096,20 +1079,19 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // playing at a theater today, with real pricing included in the
     // same response, so filtering to the target movie + search window
     // happens directly against AMC's own data.
-    // amcResolvedIds was already computed in the early chain-resolution
-    // block above (before Phase 2) -- reused here as-is.
-    const amcTheaterEntries = theatersInRange.filter((t) => amcResolvedIds[t.name] != null);
-
+    // amcDirectTheaters was populated in the early chain-resolution
+    // block above (before Phase 2) -- theaters come straight from
+    // AMC's own API with their own IDs, names, and coordinates.
     await Promise.all(
-      amcTheaterEntries.map((theater) =>
+      amcDirectTheaters.map((theater) =>
         priceLimit(async () => {
-          const theaterName = theater.displayName || theater.name;
+          const theaterName = theater.name;
           try {
             // No candidateMinutes passed -- this is now the discovery
             // step itself, not a narrow-and-price step against
             // something else's candidates.
             const allShowings = await getAmcPricedShowtimes({
-              theatreId: amcResolvedIds[theaterName],
+              theatreId: theater.id,
               movieTitle: movie,
               dateISO: searchDateISO,
             });
@@ -1400,21 +1382,21 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     );
 
     // ---- Phase 7: Harkins -- native discovery + pricing (Vista-family platform) ----
-    // harkinsResolvedTheaters was already computed in the early chain-
-    // resolution block above (before Phase 2) -- reused here as-is.
+    // harkinsDirectTheaters was populated in the early chain-resolution
+    // block above (before Phase 2) -- theaters come straight from
+    // Harkins' own ticketing API with both IDs and coordinates.
     // Discovery covers every Harkins theater nationwide in one call
     // (see getShowtimesForMovie in harkins-official.js), so we only need
     // to call it ONCE per search, not once per matched theater -- filter
     // its results down to the theaters we actually matched afterward.
-    const harkinsTheaterEntries = theatersInRange.filter((t) => harkinsResolvedTheaters[t.name]);
 
-    if (harkinsTheaterEntries.length > 0) {
+    if (harkinsDirectTheaters.length > 0) {
       try {
         // anyTheaterId just needs to be A real Harkins theater ID (the
         // discovery call doesn't actually filter by it despite the
         // parameter's name) -- using whichever matched theater happens
         // to be first.
-        const anyHarkinsId = harkinsResolvedTheaters[harkinsTheaterEntries[0].name].harkinsId;
+        const anyHarkinsId = harkinsDirectTheaters[0].harkinsId;
         const allPerformances = await getHarkinsShowtimesForMovie({
           movieTitle: movie,
           dateISO: searchDateISO,
@@ -1426,10 +1408,10 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         );
 
         await Promise.all(
-          harkinsTheaterEntries.map((theater) =>
+          harkinsDirectTheaters.map((theater) =>
             priceLimit(async () => {
-              const theaterName = theater.displayName || theater.name;
-              const { harkinsId, cinemaId } = harkinsResolvedTheaters[theaterName];
+              const theaterName = theater.name;
+              const { harkinsId, cinemaId } = theater;
               const theaterPerformances = allPerformances.filter((p) => String(p.theatreId) === String(harkinsId));
 
               // Real gap this was missing before: no per-theater visibility at
@@ -1956,10 +1938,10 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         theaterChainMatches: theatersInRange.map((t) => ({
           name: t.name,
           regal: regalResolvedIds[t.name] ?? null,
-          amc: amcResolvedIds[t.name] ?? null,
+          amc: null, // AMC discovered separately via amcDirectTheaters, not via OSM names
           cinemark: cinemarkResolvedIds[t.name] ?? null,
           cinemawest: cinemaWestResolvedTheaters[t.name] ? cinemaWestResolvedTheaters[t.name].siteId : null,
-          harkins: harkinsResolvedTheaters[t.name] ? harkinsResolvedTheaters[t.name].harkinsId : null,
+          harkins: null, // Harkins discovered separately via harkinsDirectTheaters, not via OSM names
           regency: regencyResolvedTheaters[t.name] ? regencyResolvedTheaters[t.name].site : null,
         })),
         fullSchedulesViaSerpApi: fullSchedules, // null unless debugSerpApi=true was also passed
