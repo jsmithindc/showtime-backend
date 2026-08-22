@@ -6,6 +6,11 @@ const { getPricedShowtimes, getTheaterSchedule } = require("./lib/priceAdapters/
 const { resolveCanonicalLocation } = require("./lib/serpapi-location");
 const { getPricedShowtimes: getRegalPricedShowtimes, getShowtimesForTheater: getRegalShowtimesForTheater } = require("./lib/priceAdapters/regal-scrapedo");
 const REGAL_CINEMA_MAP = require("./lib/regal-cinema-map");
+// Some map entries are objects { code, lat, lng } instead of plain strings,
+// used when the theater's OSM coordinates are known to be wrong. These two
+// helpers normalize access so the rest of the code doesn't have to care.
+function regalCodeFor(entry) { return entry == null ? null : (typeof entry === "string" ? entry : entry.code); }
+function regalCoordsFor(entry) { return (entry != null && typeof entry === "object" && entry.lat != null) ? { lat: entry.lat, lng: entry.lng } : null; }
 const EXCLUDED_THEATERS = require("./lib/excluded-theaters");
 const { getPricedShowtimes: getAmcPricedShowtimes } = require("./lib/priceAdapters/amc-official");
 const AMC_THEATRE_MAP = require("./lib/amc-theatre-map");
@@ -552,11 +557,13 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     }
 
     const theatersInRange = nearbyTheaters
-      .map((t) => ({
-        ...t,
-        name: normalizeTheaterName(t.name),
-        distanceMin: estimatedMinutesAway(originLat, originLng, t.lat, t.lng),
-      }))
+      .map((t) => {
+        const normalizedName = normalizeTheaterName(t.name);
+        const coordOverride = regalCoordsFor(REGAL_CINEMA_MAP[normalizedName]);
+        const tLat = coordOverride ? coordOverride.lat : t.lat;
+        const tLng = coordOverride ? coordOverride.lng : t.lng;
+        return { ...t, name: normalizedName, lat: tLat, lng: tLng, distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
+      })
       .filter((t) => t.distanceMin <= Number(radiusMin))
       .filter((t) => !EXCLUDED_THEATERS.has(t.name));
 
@@ -592,7 +599,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     if (wantChain("regal")) {
       for (const t of theatersInRange) {
         if (REGAL_CINEMA_MAP[t.name] != null) {
-          regalResolvedIds[t.name] = REGAL_CINEMA_MAP[t.name];
+          regalResolvedIds[t.name] = regalCodeFor(REGAL_CINEMA_MAP[t.name]);
         }
       }
       const unmappedRegalInRange = theatersInRange.filter((t) => regalResolvedIds[t.name] == null);
@@ -2001,11 +2008,13 @@ app.get("/api/movies", searchRateLimiter, async (req, res) => {
     });
 
     const theatersInRange = nearbyTheaters
-      .map((t) => ({
-        ...t,
-        name: normalizeTheaterName(t.name),
-        distanceMin: estimatedMinutesAway(originLat, originLng, t.lat, t.lng),
-      }))
+      .map((t) => {
+        const normalizedName = normalizeTheaterName(t.name);
+        const coordOverride = regalCoordsFor(REGAL_CINEMA_MAP[normalizedName]);
+        const tLat = coordOverride ? coordOverride.lat : t.lat;
+        const tLng = coordOverride ? coordOverride.lng : t.lng;
+        return { ...t, name: normalizedName, lat: tLat, lng: tLng, distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
+      })
       .filter((t) => t.distanceMin <= Number(radiusMin))
       .filter((t) => !EXCLUDED_THEATERS.has(t.name));
 
@@ -2130,11 +2139,13 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     const nearbyTheaters = await findNearbyTheaters({ lat: originLat, lng: originLng, radiusMeters });
 
     const theatersInRange = nearbyTheaters
-      .map((t) => ({
-        ...t,
-        name: normalizeTheaterName(t.name),
-        distanceMin: estimatedMinutesAway(originLat, originLng, t.lat, t.lng),
-      }))
+      .map((t) => {
+        const normalizedName = normalizeTheaterName(t.name);
+        const coordOverride = regalCoordsFor(REGAL_CINEMA_MAP[normalizedName]);
+        const tLat = coordOverride ? coordOverride.lat : t.lat;
+        const tLng = coordOverride ? coordOverride.lng : t.lng;
+        return { ...t, name: normalizedName, lat: tLat, lng: tLng, distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
+      })
       .filter((t) => t.distanceMin <= Number(radiusMin))
       .filter((t) => !EXCLUDED_THEATERS.has(t.name));
 
@@ -2390,11 +2401,13 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
     }
 
     const theatersInRange = nearbyTheaters
-      .map((t) => ({
-        ...t,
-        name: normalizeTheaterName(t.name),
-        distanceMin: estimatedMinutesAway(originLat, originLng, t.lat, t.lng),
-      }))
+      .map((t) => {
+        const normalizedName = normalizeTheaterName(t.name);
+        const coordOverride = regalCoordsFor(REGAL_CINEMA_MAP[normalizedName]);
+        const tLat = coordOverride ? coordOverride.lat : t.lat;
+        const tLng = coordOverride ? coordOverride.lng : t.lng;
+        return { ...t, name: normalizedName, lat: tLat, lng: tLng, distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
+      })
       .filter((t) => t.distanceMin <= Number(radiusMin))
       .filter((t) => !EXCLUDED_THEATERS.has(t.name));
 
