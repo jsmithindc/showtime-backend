@@ -607,7 +607,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
             // it: a 2-mile radius ("city-level estimate", see the log
             // message) is a much wider net than AMC's 0.3mi, so a false
             // positive here is if anything more likely, not less.
-            if (!/\bregal\b/i.test(t.name)) {
+            if (!/\bregal\b|\bedwards\b/i.test(t.name)) {
               console.error(
                 `Regal auto-match skipped: OSM theater "${t.name}" doesn't mention Regal in its own name -- ` +
                 `not attempting a distance-only match.`
@@ -2162,7 +2162,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
           // but displayed under Regency Academy Cinemas' name. Same
           // fix as the other copy: require the OSM name to actually
           // mention Regal before attempting a distance-only match.
-          if (!/\bregal\b/i.test(t.name)) {
+          if (!/\bregal\b|\bedwards\b/i.test(t.name)) {
             console.error(
               `Regal auto-match skipped (search-regal endpoint): OSM theater "${t.name}" doesn't mention Regal ` +
               `in its own name -- not attempting a distance-only match.`
