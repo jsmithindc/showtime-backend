@@ -12,6 +12,11 @@ const REGAL_CINEMA_MAP = require("./lib/regal-cinema-map");
 function regalCodeFor(entry) { return entry == null ? null : (typeof entry === "string" ? entry : entry.code); }
 function regalCoordsFor(entry) { return (entry != null && typeof entry === "object" && entry.lat != null) ? { lat: entry.lat, lng: entry.lng } : null; }
 function regalDisplayNameFor(entry) { return (entry != null && typeof entry === "object") ? entry.displayName || null : null; }
+// Display name overrides for theaters whose OSM name doesn't match the
+// chain's official branding. Keyed by normalized OSM name.
+const THEATER_DISPLAY_NAMES = {
+  "AMC 16 Galleria at Tyler": "AMC Tyler Galleria 16",
+};
 const EXCLUDED_THEATERS = require("./lib/excluded-theaters");
 const { getPricedShowtimes: getAmcPricedShowtimes } = require("./lib/priceAdapters/amc-official");
 const AMC_THEATRE_MAP = require("./lib/amc-theatre-map");
@@ -564,7 +569,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         const coordOverride = regalCoordsFor(regalEntry);
         const tLat = coordOverride ? coordOverride.lat : t.lat;
         const tLng = coordOverride ? coordOverride.lng : t.lng;
-        const displayName = regalDisplayNameFor(regalEntry);
+        const displayName = regalDisplayNameFor(regalEntry) || THEATER_DISPLAY_NAMES[normalizedName] || undefined;
         return { ...t, name: normalizedName, lat: tLat, lng: tLng, ...(displayName ? { displayName } : {}), distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
       })
       .filter((t) => t.distanceMin <= Number(radiusMin))
@@ -2017,7 +2022,7 @@ app.get("/api/movies", searchRateLimiter, async (req, res) => {
         const coordOverride = regalCoordsFor(regalEntry);
         const tLat = coordOverride ? coordOverride.lat : t.lat;
         const tLng = coordOverride ? coordOverride.lng : t.lng;
-        const displayName = regalDisplayNameFor(regalEntry);
+        const displayName = regalDisplayNameFor(regalEntry) || THEATER_DISPLAY_NAMES[normalizedName] || undefined;
         return { ...t, name: normalizedName, lat: tLat, lng: tLng, ...(displayName ? { displayName } : {}), distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
       })
       .filter((t) => t.distanceMin <= Number(radiusMin))
@@ -2150,7 +2155,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
         const coordOverride = regalCoordsFor(regalEntry);
         const tLat = coordOverride ? coordOverride.lat : t.lat;
         const tLng = coordOverride ? coordOverride.lng : t.lng;
-        const displayName = regalDisplayNameFor(regalEntry);
+        const displayName = regalDisplayNameFor(regalEntry) || THEATER_DISPLAY_NAMES[normalizedName] || undefined;
         return { ...t, name: normalizedName, lat: tLat, lng: tLng, ...(displayName ? { displayName } : {}), distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
       })
       .filter((t) => t.distanceMin <= Number(radiusMin))
@@ -2415,7 +2420,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
         const coordOverride = regalCoordsFor(regalEntry);
         const tLat = coordOverride ? coordOverride.lat : t.lat;
         const tLng = coordOverride ? coordOverride.lng : t.lng;
-        const displayName = regalDisplayNameFor(regalEntry);
+        const displayName = regalDisplayNameFor(regalEntry) || THEATER_DISPLAY_NAMES[normalizedName] || undefined;
         return { ...t, name: normalizedName, lat: tLat, lng: tLng, ...(displayName ? { displayName } : {}), distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
       })
       .filter((t) => t.distanceMin <= Number(radiusMin))
