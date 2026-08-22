@@ -799,6 +799,15 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         theatersInRange: theatersInRangeAll.length,
         results: [],
         note: "Found theaters in range, but none matched a known chain (AMC/Regal/Cinemark/Cinema West) -- nothing to price.",
+        debug: {
+          originLat,
+          originLng,
+          osmTheaters: theatersInRangeAll.map((t) => t.name),
+          regalDirect: regalDirectTheaters.length,
+          amcDirect: amcDirectTheaters.length,
+          harkinsDirect: harkinsDirectTheaters.length,
+          cinemarkDirect: cinemarkDirectTheaters.length,
+        },
       });
     }
 
