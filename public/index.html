@@ -775,6 +775,13 @@
     // ONCE here before firing both /api/search and /api/search-regal.
     // Without this, both backend calls geocode the same place in parallel,
     // racing to Nominatim and triggering 429s on Render's shared IP range.
+    // If the user typed a place/zip (no coordinates yet), pre-geocode it
+    // once here so both /api/search and /api/search-regal get lat/lng +
+    // locationLabel without each independently hitting Nominatim.
+    // If the user used "Use my location" (GPS), they already have lat/lng
+    // but no locationLabel -- pass place through so the backend geocodes
+    // for the label; the inFlight dedup in geocode.js ensures only one
+    // Nominatim/Photon call fires even if both endpoints hit it at once.
     let resolvedLat = lat, resolvedLng = lng, resolvedLocation = null;
     if ((!lat || !lng) && place) {
       try {
@@ -789,15 +796,12 @@
         els.searchBtn.textContent = 'Find showtimes';
         return;
       }
+      // Swap place for resolved coords + label in params.
+      params.delete('place');
+      params.set('lat', resolvedLat);
+      params.set('lng', resolvedLng);
+      params.set('location', resolvedLocation);
     }
-
-    // Rebuild params using resolved coordinates so both calls below send
-    // lat/lng and neither has to geocode again. Also pass the locationLabel
-    // so the backend doesn't need to re-geocode to get it for SerpApi.
-    params.delete('place');
-    params.set('lat', resolvedLat);
-    params.set('lng', resolvedLng);
-    if (resolvedLocation) params.set('location', resolvedLocation);
 
     // Regal split out into its own request (see /api/search-regal) --
     // its retry-with-delays logic can make it noticeably slower than
@@ -809,8 +813,13 @@
       date: els.searchDate.value,
       formats: activeFormats.join(','),
     });
-    regalParams.set('lat', resolvedLat);
-    regalParams.set('lng', resolvedLng);
+    if (resolvedLat && resolvedLng) {
+      regalParams.set('lat', resolvedLat);
+      regalParams.set('lng', resolvedLng);
+      if (resolvedLocation) regalParams.set('location', resolvedLocation);
+    } else {
+      regalParams.set('place', place);
+    }
 
     const regalPromise = wantsRegal
       ? fetch(`/api/search-regal?${regalParams.toString()}`)
