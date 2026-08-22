@@ -809,7 +809,9 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         for (const t of allCinemark) {
           const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
           if (dMin <= discoveryRadiusMin) {
-            cinemarkDirectTheaters.push({ ...t, distanceMin: dMin });
+            // Strip Cinemark's SEO prefix ("Movie Theater In X, Y | Cinemark Z" -> "Cinemark Z")
+            const cleanName = t.name.includes(" | ") ? t.name.split(" | ").pop() : t.name;
+            cinemarkDirectTheaters.push({ ...t, name: cleanName, distanceMin: dMin });
           }
         }
         console.error(
