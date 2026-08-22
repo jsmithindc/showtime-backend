@@ -315,6 +315,44 @@ function isRoughlyInCalifornia(lat, lng) {
   return lat >= 32.4 && lat <= 42.1 && lng >= -124.6 && lng <= -114.0;
 }
 
+// Rough bounding-box US state lookup -- good enough for choosing which
+// state's AMC theater list to fetch. Boxes overlap at borders; first
+// match wins, which is fine since AMC's API deduplicates by ID anyway.
+const US_STATE_BOXES = [
+  ["AK", 51.2, 71.5, -180, -130], ["AL", 30.1, 35.0, -88.5, -84.9],
+  ["AR", 33.0, 36.5, -94.6, -89.6], ["AZ", 31.3, 37.0, -114.8, -109.0],
+  ["CA", 32.4, 42.1, -124.6, -114.0], ["CO", 36.9, 41.1, -109.1, -102.0],
+  ["CT", 40.9, 42.1, -73.7, -71.8], ["DC", 38.8, 39.0, -77.1, -76.9],
+  ["DE", 38.4, 39.8, -75.8, -75.0], ["FL", 24.4, 31.1, -87.6, -79.9],
+  ["GA", 30.4, 35.0, -85.6, -80.8], ["HI", 18.9, 22.2, -160.3, -154.8],
+  ["IA", 40.4, 43.5, -96.6, -90.1], ["ID", 41.9, 49.0, -117.2, -111.0],
+  ["IL", 36.9, 42.5, -91.5, -87.0], ["IN", 37.8, 41.8, -88.1, -84.8],
+  ["KS", 36.9, 40.0, -102.1, -94.6], ["KY", 36.5, 39.1, -89.6, -81.9],
+  ["LA", 28.9, 33.0, -94.1, -88.8], ["MA", 41.2, 42.9, -73.5, -69.9],
+  ["MD", 37.9, 39.7, -79.5, -75.0], ["ME", 43.1, 47.5, -71.1, -66.9],
+  ["MI", 41.7, 48.3, -90.4, -82.4], ["MN", 43.5, 49.4, -97.2, -89.5],
+  ["MO", 35.9, 40.6, -95.8, -89.1], ["MS", 30.2, 35.0, -91.7, -88.1],
+  ["MT", 44.4, 49.0, -116.1, -104.0], ["NC", 33.8, 36.6, -84.3, -75.5],
+  ["ND", 45.9, 49.0, -104.1, -96.6], ["NE", 40.0, 43.0, -104.1, -95.3],
+  ["NH", 42.7, 45.3, -72.6, -70.6], ["NJ", 38.9, 41.4, -75.6, -73.9],
+  ["NM", 31.3, 37.0, -109.1, -103.0], ["NV", 35.0, 42.0, -120.0, -114.0],
+  ["NY", 40.5, 45.0, -79.8, -71.9], ["OH", 38.4, 42.3, -84.8, -80.5],
+  ["OK", 33.6, 37.0, -103.0, -94.4], ["OR", 41.9, 46.3, -124.6, -116.5],
+  ["PA", 39.7, 42.3, -80.5, -74.7], ["RI", 41.1, 42.0, -71.9, -71.1],
+  ["SC", 32.0, 35.2, -83.4, -78.5], ["SD", 42.5, 45.9, -104.1, -96.4],
+  ["TN", 34.9, 36.7, -90.3, -81.6], ["TX", 25.8, 36.5, -106.6, -93.5],
+  ["UT", 37.0, 42.0, -114.1, -109.0], ["VA", 36.5, 39.5, -83.7, -75.2],
+  ["VT", 42.7, 45.0, -73.4, -71.5], ["WA", 45.5, 49.0, -124.8, -116.9],
+  ["WI", 42.5, 47.1, -92.9, -86.2], ["WV", 37.2, 40.6, -82.6, -77.7],
+  ["WY", 41.0, 45.0, -111.1, -104.1],
+];
+function latLngToUsState(lat, lng) {
+  for (const [state, latMin, latMax, lngMin, lngMax] of US_STATE_BOXES) {
+    if (lat >= latMin && lat <= latMax && lng >= lngMin && lng <= lngMax) return state;
+  }
+  return null;
+}
+
 // CONFIRMED REAL BUG, found from a live report: two real IMAX showings
 // (AMC Orange 30, AMC Norwalk 20) never appeared in results despite
 // being genuinely bookable. Root cause confirmed directly from an
@@ -652,11 +690,12 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         }
       }
       const unmappedAmcInRange = theatersInRange.filter((t) => amcResolvedIds[t.name] == null);
-      if (unmappedAmcInRange.some((t) => isRoughlyInCalifornia(t.lat, t.lng))) {
-        try {
-          const caAmcTheaters = await getAmcTheatersByState("CA");
-          for (const t of unmappedAmcInRange) {
-            if (!isRoughlyInCalifornia(t.lat, t.lng)) continue;
+      if (unmappedAmcInRange.length > 0) {
+        // Group unmapped AMC-named theaters by US state so we fetch each
+        // state's theater list at most once (API call per state, cached).
+        const stateGroups = {};
+        for (const t of unmappedAmcInRange) {
+          if (!/\bamc\b/i.test(t.name)) {
             // CONFIRMED REAL BUG, caught from a live report: distance-
             // only matching wrongly paired "Laemmle Glendale" (a real,
             // entirely separate art-house chain) and "Five Star Cinema"
@@ -673,24 +712,33 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
             // this specific failure mode without needing a smaller,
             // riskier distance threshold that could reject genuine
             // matches elsewhere.
-            if (!/\bamc\b/i.test(t.name)) {
-              console.error(
-                `AMC auto-match skipped: OSM theater "${t.name}" doesn't mention AMC in its own name -- ` +
-                `not attempting a distance-only match (see the comment above this line for why).`
-              );
-              continue;
-            }
-            const match = findClosestAmcTheater(t.lat, t.lng, caAmcTheaters);
-            if (match) {
-              amcResolvedIds[t.name] = match.id;
-              console.error(
-                `AMC auto-match: OSM theater "${t.name}" -> AMC theatre #${match.id} ` +
-                `("${match.name}"), ${match.matchedDistanceMiles.toFixed(3)} mi apart`
-              );
-            }
+            console.error(
+              `AMC auto-match skipped: OSM theater "${t.name}" doesn't mention AMC in its own name -- ` +
+              `not attempting a distance-only match (see the comment above this line for why).`
+            );
+            continue;
           }
-        } catch (err) {
-          console.error("AMC California theater list fetch failed:", err.message);
+          const state = latLngToUsState(t.lat, t.lng);
+          if (!state) continue;
+          if (!stateGroups[state]) stateGroups[state] = [];
+          stateGroups[state].push(t);
+        }
+        for (const [state, theaters] of Object.entries(stateGroups)) {
+          try {
+            const stateAmcTheaters = await getAmcTheatersByState(state);
+            for (const t of theaters) {
+              const match = findClosestAmcTheater(t.lat, t.lng, stateAmcTheaters);
+              if (match) {
+                amcResolvedIds[t.name] = match.id;
+                console.error(
+                  `AMC auto-match: OSM theater "${t.name}" -> AMC theatre #${match.id} ` +
+                  `("${match.name}"), ${match.matchedDistanceMiles.toFixed(3)} mi apart`
+                );
+              }
+            }
+          } catch (err) {
+            console.error(`AMC ${state} theater list fetch failed:`, err.message);
+          }
         }
       }
     }
