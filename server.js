@@ -11,6 +11,7 @@ const REGAL_CINEMA_MAP = require("./lib/regal-cinema-map");
 // helpers normalize access so the rest of the code doesn't have to care.
 function regalCodeFor(entry) { return entry == null ? null : (typeof entry === "string" ? entry : entry.code); }
 function regalCoordsFor(entry) { return (entry != null && typeof entry === "object" && entry.lat != null) ? { lat: entry.lat, lng: entry.lng } : null; }
+function regalDisplayNameFor(entry) { return (entry != null && typeof entry === "object") ? entry.displayName || null : null; }
 const EXCLUDED_THEATERS = require("./lib/excluded-theaters");
 const { getPricedShowtimes: getAmcPricedShowtimes } = require("./lib/priceAdapters/amc-official");
 const AMC_THEATRE_MAP = require("./lib/amc-theatre-map");
@@ -559,10 +560,12 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     const theatersInRange = nearbyTheaters
       .map((t) => {
         const normalizedName = normalizeTheaterName(t.name);
-        const coordOverride = regalCoordsFor(REGAL_CINEMA_MAP[normalizedName]);
+        const regalEntry = REGAL_CINEMA_MAP[normalizedName];
+        const coordOverride = regalCoordsFor(regalEntry);
         const tLat = coordOverride ? coordOverride.lat : t.lat;
         const tLng = coordOverride ? coordOverride.lng : t.lng;
-        return { ...t, name: normalizedName, lat: tLat, lng: tLng, distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
+        const displayName = regalDisplayNameFor(regalEntry);
+        return { ...t, name: normalizedName, lat: tLat, lng: tLng, ...(displayName ? { displayName } : {}), distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
       })
       .filter((t) => t.distanceMin <= Number(radiusMin))
       .filter((t) => !EXCLUDED_THEATERS.has(t.name));
@@ -821,7 +824,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           try {
             const entries = await getPricedShowtimes({
               movieTitle: movie,
-              theaterName: theater.name,
+              theaterName: theater.displayName || theater.name,
               location: resolvedLocation,
               dateISO: searchDateISO,
             });
@@ -1034,7 +1037,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     await Promise.all(
       amcTheaterEntries.map((theater) =>
         priceLimit(async () => {
-          const theaterName = theater.name;
+          const theaterName = theater.displayName || theater.name;
           try {
             // No candidateMinutes passed -- this is now the discovery
             // step itself, not a narrow-and-price step against
@@ -1263,7 +1266,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     await Promise.all(
       cinemaWestTheaterEntries.map((theater) =>
         priceLimit(async () => {
-          const theaterName = theater.name;
+          const theaterName = theater.displayName || theater.name;
           const { siteId, sitePath } = cinemaWestResolvedTheaters[theaterName];
           try {
             const cinemaWestToken = await getCinemaWestFreshToken(sitePath);
@@ -1359,7 +1362,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         await Promise.all(
           harkinsTheaterEntries.map((theater) =>
             priceLimit(async () => {
-              const theaterName = theater.name;
+              const theaterName = theater.displayName || theater.name;
               const { harkinsId, cinemaId } = harkinsResolvedTheaters[theaterName];
               const theaterPerformances = allPerformances.filter((p) => String(p.theatreId) === String(harkinsId));
 
@@ -1510,7 +1513,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     await Promise.all(
       regencyTheaterEntries.map((theater) =>
         priceLimit(async () => {
-          const theaterName = theater.name;
+          const theaterName = theater.displayName || theater.name;
           const { chain, site, seatsSiteId, locationSlug } = regencyResolvedTheaters[theaterName];
           try {
             // filmId is CONFIRMED required by the real endpoint (see the
@@ -1858,7 +1861,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           priceLimit(async () => {
             try {
               const all = await getTheaterSchedule({
-                theaterName: theater.name,
+                theaterName: theater.displayName || theater.name,
                 location: resolvedLocation,
                 dateISO: searchDateISO,
               });
@@ -2010,10 +2013,12 @@ app.get("/api/movies", searchRateLimiter, async (req, res) => {
     const theatersInRange = nearbyTheaters
       .map((t) => {
         const normalizedName = normalizeTheaterName(t.name);
-        const coordOverride = regalCoordsFor(REGAL_CINEMA_MAP[normalizedName]);
+        const regalEntry = REGAL_CINEMA_MAP[normalizedName];
+        const coordOverride = regalCoordsFor(regalEntry);
         const tLat = coordOverride ? coordOverride.lat : t.lat;
         const tLng = coordOverride ? coordOverride.lng : t.lng;
-        return { ...t, name: normalizedName, lat: tLat, lng: tLng, distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
+        const displayName = regalDisplayNameFor(regalEntry);
+        return { ...t, name: normalizedName, lat: tLat, lng: tLng, ...(displayName ? { displayName } : {}), distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
       })
       .filter((t) => t.distanceMin <= Number(radiusMin))
       .filter((t) => !EXCLUDED_THEATERS.has(t.name));
@@ -2046,7 +2051,7 @@ app.get("/api/movies", searchRateLimiter, async (req, res) => {
         priceLimit(async () => {
           try {
             return await getTheaterSchedule({
-              theaterName: theater.name,
+              theaterName: theater.displayName || theater.name,
               location: resolvedLocation,
               dateISO: searchDateISO,
             });
@@ -2141,10 +2146,12 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     const theatersInRange = nearbyTheaters
       .map((t) => {
         const normalizedName = normalizeTheaterName(t.name);
-        const coordOverride = regalCoordsFor(REGAL_CINEMA_MAP[normalizedName]);
+        const regalEntry = REGAL_CINEMA_MAP[normalizedName];
+        const coordOverride = regalCoordsFor(regalEntry);
         const tLat = coordOverride ? coordOverride.lat : t.lat;
         const tLng = coordOverride ? coordOverride.lng : t.lng;
-        return { ...t, name: normalizedName, lat: tLat, lng: tLng, distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
+        const displayName = regalDisplayNameFor(regalEntry);
+        return { ...t, name: normalizedName, lat: tLat, lng: tLng, ...(displayName ? { displayName } : {}), distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
       })
       .filter((t) => t.distanceMin <= Number(radiusMin))
       .filter((t) => !EXCLUDED_THEATERS.has(t.name));
@@ -2253,11 +2260,12 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     await Promise.all(
       regalTheaterEntries.map((theater) =>
         priceLimit(async () => {
-          const theaterName = theater.name;
+          const theaterKey = theater.name;
+          const theaterName = theater.displayName || theater.name;
           try {
             const costTracker = { total: 0, byProvider: {} };
             const allPerformances = await getRegalShowtimesForTheater({
-              cinemaCode: regalResolvedIds[theaterName],
+              cinemaCode: regalResolvedIds[theaterKey],
               dateISO: searchDateISO,
               costTracker,
             });
@@ -2275,7 +2283,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
             // the answer by elimination each time. Listing every matched
             // showtime's raw time now closes that gap for good.
             console.error(
-              `Regal [${regalResolvedIds[theaterName]}]: found ${allPerformances.length} total performances, ` +
+              `Regal [${regalResolvedIds[theaterKey]}]: found ${allPerformances.length} total performances, ` +
               `${movieMatches.length} matching "${movie}", ${inWindow.length} within your search window ` +
               `(pricing only these). Movies seen: ${[...new Set(allPerformances.map((p) => p.movieName))].join(", ") || "(none)"}. ` +
               `Real times seen for "${movie}": ${movieMatches.map((p) => p.showTime.slice(0, 5)).join(", ") || "(none)"}`
@@ -2289,7 +2297,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
             }
 
             const priced = await getRegalPricedShowtimes({
-              cinemaCode: regalResolvedIds[theaterName],
+              cinemaCode: regalResolvedIds[theaterKey],
               movieTitle: movie,
               dateISO: searchDateISO,
               preDiscoveredPerformances: toPrice,
@@ -2306,7 +2314,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               const [y, m, d] = searchDateISO.split("-");
               const regalDateFormatted = `${m}-${d}-${y}`;
               const regalBookingLink = p.movieId
-                ? `https://www.regmovies.com/movies/${toUrlSlug(movie)}-${p.movieId.toLowerCase()}?date=${regalDateFormatted}&site=${regalResolvedIds[theaterName]}&id=${p.performanceId ?? ""}`
+                ? `https://www.regmovies.com/movies/${toUrlSlug(movie)}-${p.movieId.toLowerCase()}?date=${regalDateFormatted}&site=${regalResolvedIds[theaterKey]}&id=${p.performanceId ?? ""}`
                 : googleFallbackLink(theaterName, movie);
               const built = regalResultIfWithinWindow({
                 theaterName,
@@ -2403,10 +2411,12 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
     const theatersInRange = nearbyTheaters
       .map((t) => {
         const normalizedName = normalizeTheaterName(t.name);
-        const coordOverride = regalCoordsFor(REGAL_CINEMA_MAP[normalizedName]);
+        const regalEntry = REGAL_CINEMA_MAP[normalizedName];
+        const coordOverride = regalCoordsFor(regalEntry);
         const tLat = coordOverride ? coordOverride.lat : t.lat;
         const tLng = coordOverride ? coordOverride.lng : t.lng;
-        return { ...t, name: normalizedName, lat: tLat, lng: tLng, distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
+        const displayName = regalDisplayNameFor(regalEntry);
+        return { ...t, name: normalizedName, lat: tLat, lng: tLng, ...(displayName ? { displayName } : {}), distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
       })
       .filter((t) => t.distanceMin <= Number(radiusMin))
       .filter((t) => !EXCLUDED_THEATERS.has(t.name));
@@ -2427,7 +2437,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
         priceLimit(async () => {
           try {
             const entries = await getTheaterSchedule({
-              theaterName: theater.name,
+              theaterName: theater.displayName || theater.name,
               location: resolvedLocation,
               dateISO: searchDateISO,
             });
