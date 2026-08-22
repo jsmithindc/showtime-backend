@@ -354,6 +354,17 @@ function latLngToUsState(lat, lng) {
   }
   return null;
 }
+// Returns ALL matching states -- bounding boxes for small/dense northeastern
+// states (NY/NJ/PA/CT/etc.) overlap, so a single point near a state border
+// can match multiple boxes. AMC's state-filtered API needs all of them or it
+// misses theaters on the other side of the border.
+function latLngToUsStates(lat, lng) {
+  return US_STATE_BOXES
+    .filter(([, latMin, latMax, lngMin, lngMax]) =>
+      lat >= latMin && lat <= latMax && lng >= lngMin && lng <= lngMax
+    )
+    .map(([state]) => state);
+}
 
 // CONFIRMED REAL BUG, found from a live report: two real IMAX showings
 // (AMC Orange 30, AMC Norwalk 20) never appeared in results despite
@@ -667,31 +678,41 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
             .catch((err) => console.error("Regal direct: theater list fetch failed:", err.message))
         : Promise.resolve(),
 
-      // AMC: state-scoped theater list
+      // AMC: state-scoped theater list. Check ALL states whose bounding box
+      // contains the search point -- bounding boxes overlap in the dense
+      // northeast (NY/NJ/PA especially), so a single-state lookup often
+      // fetches the wrong state's theaters entirely.
       wantChain("amc")
         ? (() => {
-            const state = latLngToUsState(originLat, originLng);
-            if (!state) {
+            const states = latLngToUsStates(originLat, originLng);
+            if (states.length === 0) {
               console.error(`AMC direct: could not determine US state for (${originLat}, ${originLng})`);
               return Promise.resolve();
             }
-            return getAmcTheatersByState(state)
-              .then((stateAmcTheaters) => {
-                for (const t of stateAmcTheaters) {
-                  const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
-                  if (dMin <= Number(radiusMin)) amcDirectTheaters.push({ ...t, distanceMin: dMin });
-                }
-                console.error(
-                  `AMC direct: ${stateAmcTheaters.length} theaters in ${state} total, ` +
-                  `${amcDirectTheaters.length} within ${radiusMin}min` +
-                  (amcDirectTheaters.length ? ": " + amcDirectTheaters.map((t) => t.name).join(", ") : "")
-                );
-                amcDirectError = amcDirectError || `${stateAmcTheaters.length} theaters in ${state}, ${amcDirectTheaters.length} in range`;
-              })
-              .catch((err) => {
-                amcDirectError = err.message;
-                console.error(`AMC direct: ${state} theater list fetch failed:`, err.message);
-              });
+            const seenAmcIds = new Set();
+            return Promise.all(
+              states.map((state) =>
+                getAmcTheatersByState(state)
+                  .then((stateTheaters) => {
+                    let addedFromState = 0;
+                    for (const t of stateTheaters) {
+                      if (seenAmcIds.has(t.id)) continue;
+                      seenAmcIds.add(t.id);
+                      const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+                      if (dMin <= Number(radiusMin)) {
+                        amcDirectTheaters.push({ ...t, distanceMin: dMin });
+                        addedFromState++;
+                      }
+                    }
+                    console.error(`AMC direct: ${stateTheaters.length} theaters in ${state}, ${addedFromState} in range`);
+                    amcDirectError = amcDirectError || `checked ${states.join("+")}`;
+                  })
+                  .catch((err) => {
+                    amcDirectError = err.message;
+                    console.error(`AMC direct: ${state} theater list fetch failed:`, err.message);
+                  })
+              )
+            );
           })()
         : Promise.resolve(),
 
