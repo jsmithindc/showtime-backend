@@ -1128,12 +1128,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     );
 
     // ---- Phase 5: real pricing for Cinemark theaters we have IDs for ----
-    // Paused by default via DISABLE_CINEMARK_PRICING -- flip to "false"
-    // in start.sh to enable. CONFIRMED WORKING LIVE (real priced results,
-    // including the real per-ticket fee): the Cloudflare risk flagged
-    // here throughout development turned out not to block this specific
-    // page, at least from this app's request pattern.
-    const cinemarkPricingDisabled = process.env.DISABLE_CINEMARK_PRICING !== "false";
+    const cinemarkPricingDisabled = false;
 
     // cinemarkDirectTheaters was already computed above -- reused here as-is.
 
@@ -1162,11 +1157,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       }
     }
 
-    if (cinemarkPricingDisabled) {
-      console.error(
-        "Cinemark pricing skipped: DISABLE_CINEMARK_PRICING is not \"false\". Set it in start.sh to re-enable."
-      );
-    } else if (!cinemarkMovieId) {
+    if (!cinemarkMovieId) {
       console.error(
         `Cinemark pricing skipped: couldn't resolve a cinemarkMovieId for "${movie}" -- not in lib/cinemark-movie-map.js, and live lookup either found no matched Cinemark theater in range or that theater's page doesn't have this title. Add a manual entry to the map if this persists.`
       );
