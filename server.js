@@ -953,6 +953,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       //   Matinee, Americana Brand 18, $16.39:                  -$7.15 (43.6%)
       //   Evening, Burbank, $21.49:                             -$11.75 (54.7%)
       //   Evening, Fullerton, $18.99:                           -$10.50 (55.3%)
+      //   Evening, Tyler Galleria 16, $21.99 Dolby:             -$7.75  (35.2%)
       //
       // REAL INSIGHT, likely explains the whole pattern: the discount
       // looks like a FLAT PER-FILM DOLLAR AMOUNT, not a percentage of
@@ -975,6 +976,17 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       // 43.6% high (a new theater, Americana Brand 18, landing just
       // outside the existing cluster) rather than treat it as noise to
       // exclude.
+      //
+      // KNOWN LIMITATION: premium format surcharges (Dolby, IMAX, etc.)
+      // are NOT discounted per AMC's own terms. The AMC API returns the
+      // full premium price as the adult ticket price without separating
+      // base from surcharge, so the discount estimate here will
+      // over-discount premium format tickets -- e.g. Tyler Galleria 16
+      // Dolby at $21.99 had only a $7.75 (35.2%) discount, not the
+      // ~55% the evening rate would predict, because only the ~$14 base
+      // portion was discounted and the ~$8 Dolby surcharge was not.
+      // Fixing this accurately requires knowing the non-premium base
+      // price at each theater, which nothing in the API exposes.
       const AMC_EVENING_RATE_LOW = 11.75 / 21.49; // Burbank, exact real ratio
       const AMC_EVENING_RATE_HIGH = 10.50 / 18.99; // Fullerton, exact real ratio
       const AMC_MATINEE_RATE_LOW = 5.70 / 18.19; // Atlantic Times Square 3D, exact real ratio
