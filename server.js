@@ -742,10 +742,10 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // API call throws and is caught silently.
     if (wantChain("amc") && amcDirectTheaters.length === 0) {
       for (const t of theatersInRange) {
-        const staticId = AMC_THEATRE_MAP[t.name];
-        if (staticId != null) {
-          amcDirectTheaters.push({ id: staticId, name: t.name, distanceMin: t.distanceMin });
-          console.error(`AMC static-map fallback: matched OSM theater "${t.name}" -> AMC id ${staticId}`);
+        const entry = AMC_THEATRE_MAP[t.name];
+        if (entry != null) {
+          amcDirectTheaters.push({ id: entry.id, name: entry.name, distanceMin: t.distanceMin });
+          console.error(`AMC static-map fallback: OSM "${t.name}" -> AMC id ${entry.id} ("${entry.name}")`);
         }
       }
       if (amcDirectTheaters.length > 0) {
