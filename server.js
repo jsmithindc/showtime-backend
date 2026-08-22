@@ -6,6 +6,7 @@ const { getPricedShowtimes, getTheaterSchedule } = require("./lib/priceAdapters/
 const { resolveCanonicalLocation } = require("./lib/serpapi-location");
 const { getPricedShowtimes: getRegalPricedShowtimes, getShowtimesForTheater: getRegalShowtimesForTheater } = require("./lib/priceAdapters/regal-scrapedo");
 const REGAL_CINEMA_MAP = require("./lib/regal-cinema-map");
+const { getRegalTheaters } = require("./lib/regal-theaters");
 // Some map entries are objects { code, lat, lng } instead of plain strings,
 // used when the theater's OSM coordinates are known to be wrong. These two
 // helpers normalize access so the rest of the code doesn't have to care.
@@ -641,44 +642,27 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       return !wantedChains || wantedChains.includes(name);
     }
 
-    const regalResolvedIds = {};
+    // Regal direct discovery: same approach as AMC and Harkins -- use
+    // Regal's own theater list (regmovies.com/api/theatres, fetched via
+    // the proxy since regmovies.com is Cloudflare-protected) rather than
+    // OSM name-matching. Returns { code, name, lat, lng } for all 400+
+    // Regal locations nationwide; filter to search radius here.
+    const regalDirectTheaters = [];
     if (wantChain("regal")) {
-      for (const t of theatersInRange) {
-        if (REGAL_CINEMA_MAP[t.name] != null) {
-          regalResolvedIds[t.name] = regalCodeFor(REGAL_CINEMA_MAP[t.name]);
-        }
-      }
-      const unmappedRegalInRange = theatersInRange.filter((t) => regalResolvedIds[t.name] == null);
-      if (unmappedRegalInRange.some((t) => isRoughlyInCalifornia(t.lat, t.lng))) {
-        try {
-          const caRegalTheaters = require("./lib/regal-theaters-ca");
-          for (const t of unmappedRegalInRange) {
-            if (!isRoughlyInCalifornia(t.lat, t.lng)) continue;
-            // Same real bug and same fix as the AMC block below this
-            // one -- distance-only matching wrongly paired unrelated
-            // theaters together. This block is actually MORE exposed to
-            // it: a 2-mile radius ("city-level estimate", see the log
-            // message) is a much wider net than AMC's 0.3mi, so a false
-            // positive here is if anything more likely, not less.
-            if (!/\bregal\b|\bedwards\b/i.test(t.name)) {
-              console.error(
-                `Regal auto-match skipped: OSM theater "${t.name}" doesn't mention Regal in its own name -- ` +
-                `not attempting a distance-only match.`
-              );
-              continue;
-            }
-            const match = findClosestAmcTheater(t.lat, t.lng, caRegalTheaters, 2);
-            if (match) {
-              regalResolvedIds[t.name] = match.id;
-              console.error(
-                `Regal auto-match: OSM theater "${t.name}" -> Regal cinema #${match.id} ` +
-                `("${match.name}"), ${match.matchedDistanceMiles.toFixed(3)} mi apart (city-level estimate)`
-              );
-            }
+      try {
+        const allRegal = await getRegalTheaters();
+        for (const t of allRegal) {
+          const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+          if (dMin <= Number(radiusMin)) {
+            regalDirectTheaters.push({ ...t, distanceMin: dMin });
           }
-        } catch (err) {
-          console.error("Regal CA theater list unavailable (run scripts/build-regal-theater-map.js to generate it):", err.message);
         }
+        console.error(
+          `Regal direct: ${regalDirectTheaters.length} theaters within ${radiusMin}min` +
+          (regalDirectTheaters.length ? ": " + regalDirectTheaters.map((t) => `${t.name} (${t.code})`).join(", ") : "")
+        );
+      } catch (err) {
+        console.error("Regal direct: theater list fetch failed:", err.message);
       }
     }
 
@@ -792,9 +776,8 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     }
 
     const knownChainTheaterNames = new Set([
-      ...Object.keys(regalResolvedIds),
-      // AMC theaters are discovered directly from AMC's own API (amcDirectTheaters),
-      // not from OSM, so there's no OSM-name set to add here.
+      // Regal, AMC, and Harkins are all discovered directly from their own APIs,
+      // not from OSM, so there are no OSM-name sets to add here for those chains.
       ...Object.keys(cinemarkResolvedIds),
       ...Object.keys(cinemaWestResolvedTheaters),
       // Harkins theaters are discovered directly from Harkins' own API (harkinsDirectTheaters),
@@ -831,8 +814,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     const CHAINS_WITH_NATIVE_DISCOVERY = new Set(["regal", "amc", "cinemark", "cinemawest", "harkins", "regency"]);
     function chainsMatchingTheater(theaterName) {
       const chains = [];
-      if (regalResolvedIds[theaterName] != null) chains.push("regal");
-      // AMC and Harkins are discovered separately via their own APIs, not via theatersInRange names
+      // Regal, AMC, and Harkins are discovered separately via their own APIs -- not in theatersInRange
       if (cinemarkResolvedIds[theaterName] != null) chains.push("cinemark");
       if (cinemaWestResolvedTheaters[theaterName] != null) chains.push("cinemawest");
       if (regencyResolvedTheaters[theaterName] != null) chains.push("regency");
@@ -844,7 +826,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       return !chains.every((c) => CHAINS_WITH_NATIVE_DISCOVERY.has(c));
     });
 
-    if (theatersInRangeAll.length > 0 && knownChainTheaterNames.size === 0 && amcDirectTheaters.length === 0 && harkinsDirectTheaters.length === 0) {
+    if (theatersInRangeAll.length > 0 && knownChainTheaterNames.size === 0 && regalDirectTheaters.length === 0 && amcDirectTheaters.length === 0 && harkinsDirectTheaters.length === 0) {
       return res.json({
         movie,
         theatersFound: nearbyTheaters.length,
@@ -1937,7 +1919,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         // debugSerpApi=true explicitly since it costs real credits).
         theaterChainMatches: theatersInRange.map((t) => ({
           name: t.name,
-          regal: regalResolvedIds[t.name] ?? null,
+          regal: null, // Regal discovered separately via regalDirectTheaters, not via OSM names
           amc: null, // AMC discovered separately via amcDirectTheaters, not via OSM names
           cinemark: cinemarkResolvedIds[t.name] ?? null,
           cinemawest: cinemaWestResolvedTheaters[t.name] ? cinemaWestResolvedTheaters[t.name].siteId : null,
@@ -2204,43 +2186,23 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       .filter((t) => t.distanceMin <= Number(radiusMin))
       .filter((t) => !EXCLUDED_THEATERS.has(t.name));
 
-    const regalResolvedIds = {};
-    for (const t of theatersInRange) {
-      if (REGAL_CINEMA_MAP[t.name] != null) {
-        regalResolvedIds[t.name] = regalCodeFor(REGAL_CINEMA_MAP[t.name]);
-      }
-    }
-    const unmappedRegalInRange = theatersInRange.filter((t) => regalResolvedIds[t.name] == null);
-    if (unmappedRegalInRange.some((t) => isRoughlyInCalifornia(t.lat, t.lng))) {
-      try {
-        const caRegalTheaters = require("./lib/regal-theaters-ca");
-        for (const t of unmappedRegalInRange) {
-          if (!isRoughlyInCalifornia(t.lat, t.lng)) continue;
-          // CONFIRMED REAL BUG, caught from a live report: this is a
-          // SECOND, separate copy of the same distance-only matching
-          // logic already fixed once elsewhere in this file (the main
-          // /api/search handler) -- this copy, used by the dedicated
-          // /api/search-regal endpoint, never got the same fix. Real
-          // consequence: "Regency Academy Cinemas" (a genuinely
-          // different, real theater) got matched to "Regal Paseo"'s
-          // real cinema code purely because it was within the 2-mile
-          // radius -- showing Regal Paseo's correct real times/prices,
-          // but displayed under Regency Academy Cinemas' name. Same
-          // fix as the other copy: require the OSM name to actually
-          // mention Regal before attempting a distance-only match.
-          if (!/\bregal\b|\bedwards\b/i.test(t.name)) {
-            console.error(
-              `Regal auto-match skipped (search-regal endpoint): OSM theater "${t.name}" doesn't mention Regal ` +
-              `in its own name -- not attempting a distance-only match.`
-            );
-            continue;
-          }
-          const match = findClosestAmcTheater(t.lat, t.lng, caRegalTheaters, 2);
-          if (match) regalResolvedIds[t.name] = match.id;
+    // Regal direct discovery: same approach as the main /api/search handler.
+    // Uses regmovies.com/api/theatres (via proxy) rather than OSM name-matching.
+    const regalDirectTheaters = [];
+    try {
+      const allRegal = await getRegalTheaters();
+      for (const t of allRegal) {
+        const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+        if (dMin <= Number(radiusMin)) {
+          regalDirectTheaters.push({ ...t, distanceMin: dMin });
         }
-      } catch (err) {
-        console.error("Regal CA theater list unavailable:", err.message);
       }
+      console.error(
+        `Regal direct (search-regal): ${regalDirectTheaters.length} theaters within ${radiusMin}min` +
+        (regalDirectTheaters.length ? ": " + regalDirectTheaters.map((t) => `${t.name} (${t.code})`).join(", ") : "")
+      );
+    } catch (err) {
+      console.error("Regal direct (search-regal): theater list fetch failed:", err.message);
     }
 
     const regalPricingDisabled = process.env.DISABLE_REGAL_PRICING === "true";
@@ -2249,26 +2211,17 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       return res.json({ results: [], regalScrapeDoCreditsUsed: 0, regalCreditsByProvider: {} });
     }
 
-    const regalTheaterEntries = theatersInRange.filter((t) => regalResolvedIds[t.name] != null);
-    if (regalTheaterEntries.length === 0) {
+    if (regalDirectTheaters.length === 0) {
       return res.json({ results: [], regalScrapeDoCreditsUsed: 0, regalCreditsByProvider: {} });
     }
 
-    // TEMPORARY diagnostic: a real report of two different "Regal
-    // [1018]: found..." log lines with different total-performance
-    // counts (41, then 1) from a single confirmed single-click search,
-    // with only one real 25-credit listing charge -- consistent with a
-    // genuine duplicate theater entry (a known real-world Overpass
-    // quirk: the same physical location sometimes gets tagged as both a
-    // node and a way) causing the same theater to be processed twice
-    // concurrently, with the second call hitting the adapter's own
-    // listing cache. Logging directly whether that's actually happening
-    // rather than guessing further.
-    const regalTheaterNames = regalTheaterEntries.map((t) => t.name);
-    const duplicateNames = regalTheaterNames.filter((name, i) => regalTheaterNames.indexOf(name) !== i);
-    if (duplicateNames.length > 0) {
-      console.error(`REGAL DEBUG: duplicate theater entries found in regalTheaterEntries: ${JSON.stringify(duplicateNames)}. Full list: ${JSON.stringify(regalTheaterNames)}`);
-    }
+    // Deduplicate by code -- Regal API returns each theater once, but be safe.
+    const seenRegalCodes = new Set();
+    const uniqueRegalTheaters = regalDirectTheaters.filter((t) => {
+      if (seenRegalCodes.has(t.code)) return false;
+      seenRegalCodes.add(t.code);
+      return true;
+    });
 
     const realRuntimeMin = await getRuntimeMinutes(movie, RUNTIME_MIN, getHarkinsRuntimeForMovie);
 
@@ -2306,14 +2259,14 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     const regalCreditsByProvider = {};
 
     await Promise.all(
-      regalTheaterEntries.map((theater) =>
+      uniqueRegalTheaters.map((theater) =>
         priceLimit(async () => {
-          const theaterKey = theater.name;
-          const theaterName = theater.displayName || theater.name;
+          const theaterName = theater.name;
+          const cinemaCode = theater.code;
           try {
             const costTracker = { total: 0, byProvider: {} };
             const allPerformances = await getRegalShowtimesForTheater({
-              cinemaCode: regalResolvedIds[theaterKey],
+              cinemaCode,
               dateISO: searchDateISO,
               costTracker,
             });
@@ -2331,7 +2284,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
             // the answer by elimination each time. Listing every matched
             // showtime's raw time now closes that gap for good.
             console.error(
-              `Regal [${regalResolvedIds[theaterKey]}]: found ${allPerformances.length} total performances, ` +
+              `Regal [${cinemaCode}]: found ${allPerformances.length} total performances, ` +
               `${movieMatches.length} matching "${movie}", ${inWindow.length} within your search window ` +
               `(pricing only these). Movies seen: ${[...new Set(allPerformances.map((p) => p.movieName))].join(", ") || "(none)"}. ` +
               `Real times seen for "${movie}": ${movieMatches.map((p) => p.showTime.slice(0, 5)).join(", ") || "(none)"}`
@@ -2345,7 +2298,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
             }
 
             const priced = await getRegalPricedShowtimes({
-              cinemaCode: regalResolvedIds[theaterKey],
+              cinemaCode: cinemaCode,
               movieTitle: movie,
               dateISO: searchDateISO,
               preDiscoveredPerformances: toPrice,
@@ -2362,7 +2315,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               const [y, m, d] = searchDateISO.split("-");
               const regalDateFormatted = `${m}-${d}-${y}`;
               const regalBookingLink = p.movieId
-                ? `https://www.regmovies.com/movies/${toUrlSlug(movie)}-${p.movieId.toLowerCase()}?date=${regalDateFormatted}&site=${regalResolvedIds[theaterKey]}&id=${p.performanceId ?? ""}`
+                ? `https://www.regmovies.com/movies/${toUrlSlug(movie)}-${p.movieId.toLowerCase()}?date=${regalDateFormatted}&site=${cinemaCode}&id=${p.performanceId ?? ""}`
                 : googleFallbackLink(theaterName, movie);
               const built = regalResultIfWithinWindow({
                 theaterName,
