@@ -1044,7 +1044,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       // your deadline -- the worse failure mode -- so when uncertain,
       // filter as if trailers run long.
       const endMin = startMin + realRuntimeMin + trailerHigh;
-      if (startMin < nowMinutes) return null;
+      if (startMin < nowMinutes - 15) return null;
       if (endMin > deadlineMinutes) return null;
       if (!matchesWantedFormat(format, wantedFormats)) return null;
 
@@ -2522,7 +2522,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       if (startMin === null) return null;
       const { high: trailerHigh, low: trailerLow } = getTrailerBufferRange(theaterName);
       const endMin = startMin + realRuntimeMin + trailerHigh;
-      if (startMin < nowMinutes) return null;
+      if (startMin < nowMinutes - 15) return null;
       if (endMin > deadlineMinutes) return null;
       if (!matchesWantedFormat(fmt, wantedFormats)) return null;
 
