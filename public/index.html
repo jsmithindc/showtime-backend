@@ -394,7 +394,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.4.7</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.4.8</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -790,6 +790,12 @@
     els.searchBtn.textContent = 'Searching...';
     els.statusLine.textContent = 'Checking nearby theaters...';
 
+    // Request notification permission on first search so we can alert when
+    // results are ready even if the user has switched tabs.
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
     // When the user typed a place/zip instead of coordinates, geocode it
     // ONCE here before firing both /api/search and /api/search-regal.
     // Without this, both backend calls geocode the same place in parallel,
@@ -925,6 +931,7 @@
           merged.matchingShowings = (merged.matchingShowings ?? merged.results.length) + regalResults.length;
           merged.regalOverflow = regalOverflow;
           renderResults(merged, lastRenderOpts);
+          notifySearchComplete(merged.results.length);
         });
       }
     } catch (err) {
@@ -933,6 +940,7 @@
     } finally {
       els.searchBtn.disabled = false;
       els.searchBtn.textContent = searchMode === 'window' ? 'Find what fits' : 'Find showtimes';
+      if (!wantsRegal) notifySearchComplete(lastRenderData?.results?.length ?? 0);
     }
   }
 
@@ -1010,7 +1018,17 @@
     } finally {
       els.searchBtn.disabled = false;
       els.searchBtn.textContent = 'Find what fits';
+      notifySearchComplete(lastRenderData?.results?.length ?? 0);
     }
+  }
+
+  function notifySearchComplete(resultCount) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    if (document.visibilityState === 'visible') return; // already on the tab, no need
+    const body = resultCount > 0
+      ? `${resultCount} showing${resultCount === 1 ? '' : 's'} found`
+      : 'No showings found for your search';
+    new Notification('Showtime Finder', { body, icon: '/favicon.ico' });
   }
 
   // Format filter state -- persists across re-renders triggered by
