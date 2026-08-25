@@ -489,6 +489,9 @@ function cinemarkDisplayFormat(rawFormat) {
   const trimmed = (rawFormat || "").trim();
   if (trimmed.toLowerCase() === "standard format") return "Standard";
   const withoutFormat = trimmed.replace(/\s*\bformat\b\s*/i, " ").trim() || trimmed;
+  // "Standard Luxury Lounger" → "Luxury Lounger": strip leading "Standard "
+  // when the string has more content after it (bare "Standard" is kept as-is).
+  const withoutLeadingStandard = withoutFormat.replace(/^standard\s+(?=\S)/i, "").trim() || withoutFormat;
   // CONFIRMED REAL from a live report: Cinemark's own raw data returns
   // inconsistent capitalization for the same feature across different
   // theaters/records -- "D-BOX" from one, "D-Box" from another -- which
@@ -501,7 +504,7 @@ function cinemarkDisplayFormat(rawFormat) {
   // been enough, since individual result cards still need to match
   // whichever chip is active regardless of which casing that specific
   // theater happened to return.
-  return withoutFormat.replace(/d-?box/gi, "D-BOX");
+  return withoutLeadingStandard.replace(/d-?box/gi, "D-BOX");
 }
 
 // Module-level standalone copies of formatEndTime/formatEndTimeRange
