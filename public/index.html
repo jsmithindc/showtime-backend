@@ -14,6 +14,9 @@
     --gold: #e2a545;
     --gold-dim: #8a6a34;
     --stub-line: #3a3444;
+    --stubs-bg: rgba(255,255,255,0.05);
+    --stubs-label: #9a8e80;
+    --stubs-amt: #d4c8b8;
     --best: #7fa66b;
     --warn: #c98a3d;
     --error: #c96a5a;
@@ -278,42 +281,45 @@
     line-height: 1.3;
   }
   .stubs-stub {
-    margin-top: 7px;
-    padding-top: 6px;
-    border-top: 1px dashed var(--stub-line);
-    max-width: 184px;
-    white-space: nowrap;
+    margin-top: 8px;
+    padding: 6px 8px;
+    background: var(--stubs-bg);
+    border-radius: 5px;
+    min-width: 0;
   }
-  .stubs-eyebrow {
-    display: block;
-    font-size: 8.5px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #b5563f;
-    margin-bottom: 2px;
-  }
-  .stubs-price-main {
-    font-family: Georgia, serif;
-    font-weight: 700;
-    font-size: 18px;
-    color: #b34a2e;
-    background: rgba(207, 122, 99, 0.14);
-    padding: 1px 5px;
-    border-radius: 3px;
-    white-space: nowrap;
-  }
-  .stubs-price-caption {
+  .stubs-label {
     font-size: 9px;
-    color: var(--ink-dim);
-    margin-left: 3px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--stubs-label);
+    margin-bottom: 4px;
   }
-  .stubs-price-online {
-    font-size: 9.5px;
+  .stubs-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    line-height: 1.5;
+  }
+  .stubs-venue {
+    font-size: 11px;
     color: var(--ink-dim);
-    margin-top: 1px;
-    line-height: 1.3;
+  }
+  .stubs-amt {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--stubs-amt);
     white-space: nowrap;
+  }
+  .stubs-amt-solo {
+    font-size: 15px;
+  }
+  .stubs-note {
+    font-size: 10px;
+    color: var(--ink-dim);
+    margin-top: 3px;
+    line-height: 1.3;
   }
   .best-tag {
     font-size: 9.5px;
@@ -394,7 +400,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.5.6</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.6.0</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -757,6 +763,7 @@
     const radius = els.radius.value.trim();
     const deadline = els.deadline.value.trim();
 
+    if (regalEs) { regalEs.close(); regalEs = null; }
     els.banners.innerHTML = '';
     els.results.innerHTML = '';
     activeResultFormats = new Set(); seenResultFormats = new Set(); // fresh search -- reset to "all formats on"
@@ -849,37 +856,48 @@
       regalParams.set('place', place);
     }
 
-    const regalPromise = wantsRegal
-      ? fetch(`/api/search-regal?${regalParams.toString()}`)
-          .then(async (r) => {
-            if (!r.ok) {
-              // A real HTTP error (e.g. a server-side 500) still has a
-              // body worth capturing -- try to read it as text even
-              // though it might not be valid JSON, since a raw error
-              // message is more useful here than nothing.
-              const text = await r.text().catch(() => '(could not read response body)');
-              throw new Error(`Regal endpoint returned ${r.status}: ${text.slice(0, 300)}`);
-            }
-            return r.json();
-          })
-          .catch((err) => {
-            // CONFIRMED REAL GAP, found from a live report: this used to
-            // be a blanket .catch(() => null) that swallowed EVERY
-            // possible failure -- network errors, a real server 500, a
-            // JSON.parse failure on a malformed response -- with zero
-            // logging and zero way to tell "genuinely fetched zero
-            // results" apart from "the fetch/parse itself silently
-            // died." A live report showed the backend log completing
-            // cleanly with no pricing failures at all, yet the UI
-            // showed nothing for Regal whatsoever -- exactly the
-            // scenario this blind spot couldn't explain. Logging the
-            // real error now, and returning a distinct marker instead
-            // of null so the merge handler below can tell the two cases
-            // apart and say so.
-            console.error('Regal fetch/parse failed:', err);
-            return { __fetchError: err.message };
-          })
-      : Promise.resolve(null);
+    // Regal streams results via SSE (EventSource) so cards appear as each
+    // performance finishes pricing -- no waiting for all to complete first.
+    let regalEs = null;
+    const regalDonePromise = wantsRegal ? new Promise((resolve) => {
+      const regalResults = [];
+      regalEs = new EventSource(`/api/search-regal?${regalParams.toString()}`);
+
+      regalEs.addEventListener('result', (e) => {
+        try {
+          const result = JSON.parse(e.data);
+          regalResults.push(result);
+          const merged = {
+            ...(lastRenderData || {}),
+            results: [...((lastRenderData && lastRenderData.results) || []), ...regalResults],
+          };
+          merged.results.sort((a, b) => {
+            const pa = effectivePriceForSorting(a), pb = effectivePriceForSorting(b);
+            if (pa == null && pb == null) return 0;
+            if (pa == null) return 1;
+            if (pb == null) return -1;
+            return pa - pb;
+          });
+          merged.matchingShowings = (merged.matchingShowings ?? merged.results.length);
+          renderResults(merged, lastRenderOpts);
+        } catch (err) {
+          console.error('Regal SSE result parse error:', err);
+        }
+      });
+
+      regalEs.addEventListener('done', () => {
+        regalEs.close();
+        regalEs = null;
+        resolve(regalResults);
+      });
+
+      regalEs.onerror = (err) => {
+        console.error('Regal SSE connection error:', err);
+        regalEs.close();
+        regalEs = null;
+        resolve(regalResults); // surface whatever arrived before the error
+      };
+    }) : Promise.resolve(null);
 
     try {
       const res = await fetch(`/api/search?${params.toString()}`);
@@ -902,38 +920,12 @@
         const regalNote = document.createElement('div');
         regalNote.className = 'banner';
         regalNote.style.cssText = 'margin-top:8px; font-size:12px; color:#8a8478;';
-        regalNote.textContent = 'Still checking Regal...';
+        regalNote.textContent = 'Checking Regal pricing...';
         els.banners.appendChild(regalNote);
 
-        regalPromise.then((regalData) => {
+        regalDonePromise.then((regalResults) => {
           regalNote.remove();
-
-          if (regalData && regalData.__fetchError) {
-            const errBanner = document.createElement('div');
-            errBanner.className = 'banner error';
-            errBanner.style.cssText = 'margin-top:8px; font-size:12px;';
-            errBanner.textContent = `Regal results failed to load: ${regalData.__fetchError}`;
-            els.banners.appendChild(errBanner);
-            return;
-          }
-
-          const regalResults = (regalData && regalData.results) || [];
-          const regalOverflow = (regalData && regalData.overflow) || [];
-          if (regalResults.length === 0 && regalOverflow.length === 0) return;
-
-          const merged = { ...lastRenderData, results: [...(lastRenderData.results || []), ...regalResults] };
-          merged.results.sort((a, b) => {
-            const priceA = effectivePriceForSorting(a);
-            const priceB = effectivePriceForSorting(b);
-            if (priceA == null && priceB == null) return 0;
-            if (priceA == null) return 1;
-            if (priceB == null) return -1;
-            return priceA - priceB;
-          });
-          merged.matchingShowings = (merged.matchingShowings ?? merged.results.length) + regalResults.length;
-          merged.regalOverflow = regalOverflow;
-          renderResults(merged, lastRenderOpts);
-          notifySearchComplete(merged.results.length);
+          notifySearchComplete((lastRenderData?.results?.length ?? 0));
         });
       }
     } catch (err) {
@@ -1074,6 +1066,7 @@
   // "closest" distance are independent orderings of the same data, not
   // something that needs a new search.
   let resultSortMode = 'price'; // 'price' | 'distance'
+  let showBasePriceOnly = false; // when true, sort/display uses pre-fee ticket price
 
   function buildCardHtml(r, isBest, opts) {
     // Field name differs by chain: AMC/Regal set estimatedFee (a guess,
@@ -1090,22 +1083,33 @@
       return lowStr === highStr ? lowStr : `${lowStr}-${highStr}`;
     }
 
-    const priceHtml = r.price != null
-      ? `<span class="price">$${r.price.toFixed(2)}</span>` +
-        (hasBreakdown
-          ? `<div class="price-breakdown">$${r.priceBeforeFee.toFixed(2)} ticket + $${fee.toFixed(2)} fee${feeIsEstimated ? ' (est.)' : ''}</div>`
+    const displayPrice = (showBasePriceOnly && r.priceBeforeFee != null) ? r.priceBeforeFee : r.price;
+    const priceHtml = displayPrice != null
+      ? `<span class="price">$${displayPrice.toFixed(2)}</span>` +
+        (hasBreakdown && !showBasePriceOnly
+          ? `<div class="price-breakdown">$${r.priceBeforeFee.toFixed(2)} + $${fee.toFixed(2)} fee${feeIsEstimated ? ' (est.)' : ''}</div>`
+          : hasBreakdown && showBasePriceOnly
+          ? `<div class="price-breakdown" style="color:var(--ink-dim);">+$${fee.toFixed(2)} fee${feeIsEstimated ? ' (est.)' : ''}</div>`
           : '') +
         (r.amcStubsDiscountPriceInPersonLow != null
-          ? `<div class="stubs-stub" title="${escapeHtml(r.amcStubsDiscountNote || '')}">
-               <span class="stubs-eyebrow">Stubs Tue/Wed</span>
-               <span class="stubs-price-main">~${formatMoneyRange(r.amcStubsDiscountPriceInPersonLow, r.amcStubsDiscountPriceInPersonHigh)}</span><span class="stubs-price-caption">in-person</span>
-               <div class="stubs-price-online">~${formatMoneyRange(r.amcStubsDiscountPriceOnlineLow, r.amcStubsDiscountPriceOnlineHigh)} online</div>
+          ? `<div class="stubs-stub">
+               <div class="stubs-label">Stubs A-List / Premiere</div>
+               <div class="stubs-row">
+                 <span class="stubs-venue">In-person</span>
+                 <span class="stubs-amt">~${formatMoneyRange(r.amcStubsDiscountPriceInPersonLow, r.amcStubsDiscountPriceInPersonHigh)}</span>
+               </div>
+               <div class="stubs-row">
+                 <span class="stubs-venue">Online</span>
+                 <span class="stubs-amt">~${formatMoneyRange(r.amcStubsDiscountPriceOnlineLow, r.amcStubsDiscountPriceOnlineHigh)}</span>
+               </div>
+               ${r.amcStubsDiscountNote ? `<div class="stubs-note">${escapeHtml(r.amcStubsDiscountNote)}</div>` : ''}
              </div>`
           : '') +
         (r.regencyTuesdayPrice != null
-          ? `<div class="stubs-stub" title="${escapeHtml(r.regencyTuesdayNote || '')}">
-               <span class="stubs-eyebrow">Tuesday Flat Rate</span><br/>
-               <span class="stubs-price-main">$${r.regencyTuesdayPrice.toFixed(2)}</span>
+          ? `<div class="stubs-stub">
+               <div class="stubs-label">Tuesday flat rate</div>
+               <div class="stubs-row"><span class="stubs-amt stubs-amt-solo">$${r.regencyTuesdayPrice.toFixed(2)}</span></div>
+               ${r.regencyTuesdayNote ? `<div class="stubs-note">${escapeHtml(r.regencyTuesdayNote)}</div>` : ''}
              </div>`
           : '')
       : `<span class="price unknown">Check<br/>theater</span>`;
@@ -1182,8 +1186,15 @@
   function effectivePriceForSorting(r) {
     if (r.amcStubsDiscountPriceOnlineHigh != null) return r.amcStubsDiscountPriceOnlineHigh;
     if (r.regencyTuesdayPrice != null) return r.regencyTuesdayPrice;
+    if (showBasePriceOnly && r.priceBeforeFee != null) return r.priceBeforeFee;
     return r.price;
   }
+
+  function toggleBasePriceOnly() {
+    showBasePriceOnly = !showBasePriceOnly;
+    renderResults(lastRenderData, lastRenderOpts);
+  }
+  window.toggleBasePriceOnly = toggleBasePriceOnly;
 
   function renderResults(data, opts = {}) {
     lastRenderData = data;
@@ -1341,12 +1352,22 @@
     // .chips/.chip -- see the CSS comment above .sort-toggle for why
     // this needed a visually distinct control rather than matching the
     // format/chain filter chips.
-    const sortToggleHtml = `<div style="margin-bottom:12px;">
-      <span style="font-size:11px; color:var(--ink-dim); margin-right:8px; vertical-align:middle;">Sort:</span>
-      <div class="sort-toggle">
-        <button class="${resultSortMode === 'price' ? 'on' : ''}" onclick="setResultSortMode('price')">Cheapest first</button>
-        <button class="${resultSortMode === 'distance' ? 'on' : ''}" onclick="setResultSortMode('distance')">Closest first</button>
+    const hasAnyFeeBreakdown = allResults.some((r) => r.priceBeforeFee != null && (r.fee ?? r.estimatedFee) != null);
+    const sortToggleHtml = `<div style="margin-bottom:12px; display:flex; flex-wrap:wrap; align-items:center; gap:12px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="font-size:11px; color:var(--ink-dim);">Sort:</span>
+        <div class="sort-toggle">
+          <button class="${resultSortMode === 'price' ? 'on' : ''}" onclick="setResultSortMode('price')">Cheapest first</button>
+          <button class="${resultSortMode === 'distance' ? 'on' : ''}" onclick="setResultSortMode('distance')">Closest first</button>
+        </div>
       </div>
+      ${hasAnyFeeBreakdown ? `<div style="display:flex; align-items:center; gap:6px;">
+        <span style="font-size:11px; color:var(--ink-dim);">Prices:</span>
+        <div class="sort-toggle">
+          <button class="${!showBasePriceOnly ? 'on' : ''}" onclick="toggleBasePriceOnly()">With fees</button>
+          <button class="${showBasePriceOnly ? 'on' : ''}" onclick="toggleBasePriceOnly()">Base only</button>
+        </div>
+      </div>` : ''}
     </div>`;
 
     if (results.length === 0) {

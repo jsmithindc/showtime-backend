@@ -2301,101 +2301,94 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       };
     }
 
-    const results = [];
-    const overflowResults = [];
+    // SSE: results stream in as each performance finishes pricing rather
+    // than waiting for all of them. Each event is one result card.
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    function sseWrite(eventName, data) {
+      if (!res.writableEnded) res.write(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`);
+    }
+
     let regalScrapeDoCallsUsed = 0;
     const regalCreditsByProvider = {};
 
-    await Promise.all(
-      uniqueRegalTheaters.map((theater) =>
-        priceLimit(async () => {
-          const theaterName = theater.name;
-          const cinemaCode = theater.code;
-          try {
-            const costTracker = { total: 0, byProvider: {} };
-            const allPerformances = await getRegalShowtimesForTheater({
-              cinemaCode,
-              dateISO: searchDateISO,
-              costTracker,
-            });
-            const movieMatches = allPerformances.filter((p) => matchesMovie(p.movieName, movie));
-            const inWindow = movieMatches.filter((p) =>
-              regalResultIfWithinWindow({ theaterName, distanceMin: theater.distanceMin, startTimeRaw: p.showTime.slice(0, 5) })
-            );
-            // CONFIRMED REAL GAP, found chasing a live report of a
-            // specific showtime (12:10pm) not appearing in results: this
-            // line only ever reported COUNTS, never the actual times
-            // found -- unlike Harkins' equivalent line a few hundred
-            // lines up, which lists every real time seen. That made it
-            // impossible to tell "our filter dropped a real showing" apart
-            // from "Regal's own listing never had it" without re-deriving
-            // the answer by elimination each time. Listing every matched
-            // showtime's raw time now closes that gap for good.
-            console.error(
-              `Regal [${cinemaCode}]: found ${allPerformances.length} total performances, ` +
-              `${movieMatches.length} matching "${movie}", ${inWindow.length} within your search window ` +
-              `(pricing only these). Movies seen: ${[...new Set(allPerformances.map((p) => p.movieName))].join(", ") || "(none)"}. ` +
-              `Real times seen for "${movie}": ${movieMatches.map((p) => `${p.showTime.slice(0, 5)}/${p.format}`).join(", ") || "(none)"}`
-            );
-            const toPrice = inWindow;
-            console.error(
-              `Regal [${cinemaCode}]: pricing all ${toPrice.length}: ${toPrice.map((p) => `${p.showTime.slice(0, 5)}/${p.format}`).join(", ")}`
-            );
+    try {
+      await Promise.all(
+        uniqueRegalTheaters.map((theater) =>
+          priceLimit(async () => {
+            const theaterName = theater.name;
+            const cinemaCode = theater.code;
+            try {
+              const costTracker = { total: 0, byProvider: {} };
+              const allPerformances = await getRegalShowtimesForTheater({
+                cinemaCode,
+                dateISO: searchDateISO,
+                costTracker,
+              });
+              const movieMatches = allPerformances.filter((p) => matchesMovie(p.movieName, movie));
+              const inWindow = movieMatches.filter((p) =>
+                regalResultIfWithinWindow({ theaterName, distanceMin: theater.distanceMin, startTimeRaw: p.showTime.slice(0, 5) })
+              );
+              console.error(
+                `Regal [${cinemaCode}]: found ${allPerformances.length} total performances, ` +
+                `${movieMatches.length} matching "${movie}", ${inWindow.length} within your search window. ` +
+                `Real times seen for "${movie}": ${movieMatches.map((p) => `${p.showTime.slice(0, 5)}/${p.format}`).join(", ") || "(none)"}`
+              );
+              console.error(
+                `Regal [${cinemaCode}]: pricing all ${inWindow.length}: ${inWindow.map((p) => `${p.showTime.slice(0, 5)}/${p.format}`).join(", ")}`
+              );
 
-            const priced = await getRegalPricedShowtimes({
-              cinemaCode: cinemaCode,
-              movieTitle: movie,
-              dateISO: searchDateISO,
-              preDiscoveredPerformances: toPrice,
-              costTracker,
-            });
-            regalScrapeDoCallsUsed += priced.creditsUsed;
-            for (const [providerName, credits] of Object.entries(priced.creditsByProvider || {})) {
-              regalCreditsByProvider[providerName] = (regalCreditsByProvider[providerName] || 0) + credits;
-            }
-
-            const nullPriced = priced.results.filter((p) => p.price == null);
-            if (nullPriced.length > 0) {
-              console.error(`Regal [${cinemaCode}]: ${nullPriced.length} showing(s) returned null price (dropped from results): ${nullPriced.map((p) => `${(p.time || "?").slice(0, 5)}/${p.format}`).join(", ")}`);
-            }
-            for (const p of priced.results) {
-              if (p.price == null) continue;
-              const fmt = p.format || "Standard";
-              const estimatedFee = estimateRegalFee(fmt);
-              const [y, m, d] = searchDateISO.split("-");
-              const regalDateFormatted = `${m}-${d}-${y}`;
-              const regalBookingLink = p.movieId
-                ? `https://www.regmovies.com/movies/${toUrlSlug(movie)}-${p.movieId.toLowerCase()}?date=${regalDateFormatted}&site=${cinemaCode}&id=${p.performanceId ?? ""}`
-                : googleFallbackLink(theaterName, movie);
-              const built = regalResultIfWithinWindow({
-                theaterName,
-                distanceMin: theater.distanceMin,
-                startTimeRaw: p.time.slice(0, 5),
-                format: fmt,
-                price: Math.round((p.price + estimatedFee) * 100) / 100,
-                bookingLink: regalBookingLink,
-                priceExtras: {
-                  priceBeforeFee: p.price,
-                  estimatedFee,
-                  feeStatus: "estimated",
+              await getRegalPricedShowtimes({
+                cinemaCode,
+                movieTitle: movie,
+                dateISO: searchDateISO,
+                preDiscoveredPerformances: inWindow,
+                costTracker,
+                onResult(p) {
+                  if (p.price == null) return;
+                  const fmt = p.format || "Standard";
+                  const estimatedFee = estimateRegalFee(fmt);
+                  const [y, m, d] = searchDateISO.split("-");
+                  const regalDateFormatted = `${m}-${d}-${y}`;
+                  const regalBookingLink = p.movieId
+                    ? `https://www.regmovies.com/movies/${toUrlSlug(movie)}-${p.movieId.toLowerCase()}?date=${regalDateFormatted}&site=${cinemaCode}&id=${p.performanceId ?? ""}`
+                    : googleFallbackLink(theaterName, movie);
+                  const built = regalResultIfWithinWindow({
+                    theaterName,
+                    distanceMin: theater.distanceMin,
+                    startTimeRaw: p.time.slice(0, 5),
+                    format: fmt,
+                    price: Math.round((p.price + estimatedFee) * 100) / 100,
+                    bookingLink: regalBookingLink,
+                    priceExtras: {
+                      priceBeforeFee: p.price,
+                      estimatedFee,
+                      feeStatus: "estimated",
+                    },
+                  });
+                  if (built) sseWrite("result", built);
                 },
               });
-              if (built) results.push(built);
-            }
-          } catch (err) {
-            console.error(`Regal pricing failed for ${theaterName}:`, err.message);
-          }
-        })
-      )
-    );
 
-    const fmtSummary = [...new Set(results.map((r) => r.format))].join(", ") || "(none)";
-    console.error(`Regal search-regal sending ${results.length} result(s), ${overflowResults.length} overflow. Formats in results: ${fmtSummary}`);
-    res.json({ results, overflow: overflowResults, regalScrapeDoCreditsUsed: regalScrapeDoCallsUsed, regalCreditsByProvider });
-  } catch (err) {
-    console.error("Regal search failed:", err);
-    res.status(500).json({ error: "Regal search failed", detail: err.message });
-  }
+              regalScrapeDoCallsUsed += costTracker.total;
+              for (const [providerName, credits] of Object.entries(costTracker.byProvider || {})) {
+                regalCreditsByProvider[providerName] = (regalCreditsByProvider[providerName] || 0) + credits;
+              }
+            } catch (err) {
+              console.error(`Regal pricing failed for ${theater.name}:`, err.message);
+            }
+          })
+        )
+      );
+    } catch (err) {
+      console.error("Regal search failed:", err);
+    }
+
+    sseWrite("done", { movie, searchDate: searchDateISO });
+    res.end();
 });
 
 // On-demand pricing for a single Regal performance -- used by the
