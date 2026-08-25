@@ -400,7 +400,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.7.2</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.7.3</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1313,9 +1313,15 @@
       ? ` <span style="color:var(--ink-dim); font-weight:400;">(${fmtRuntime(data.runtimeMinutes)})</span>`
       : '';
 
+    const dateLabel = (() => {
+      if (!data.searchDate) return '?';
+      const [y, m, d] = data.searchDate.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      return dt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    })();
     els.statusLine.innerHTML = allResults.length
-      ? `${countLabel} ${subjectLabel}${runtimeLabel} on <b>${data.searchDate || '?'}</b> (${priced} priced). Location resolved to: ${data.locationResolved || '(n/a)'}`
-      : `No ${opts.showMovieName ? 'movies fit that window' : `showings of <b>${data.movie}</b>${runtimeLabel} found within your window`} on <b>${data.searchDate || '?'}</b>. Location resolved to: ${data.locationResolved || '(n/a)'}`;
+      ? `${countLabel} ${subjectLabel}${runtimeLabel} on <b>${dateLabel}</b> (${priced} priced). Location resolved to: ${data.locationResolved || '(n/a)'}`
+      : `No ${opts.showMovieName ? 'movies fit that window' : `showings of <b>${data.movie}</b>${runtimeLabel} found within your window`} on <b>${dateLabel}</b>. Location resolved to: ${data.locationResolved || '(n/a)'}`;
 
     // Stinger info only makes sense for a single specific movie, not the
     // "3 hours to kill" mode (which mixes many different movies) -- and
