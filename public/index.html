@@ -131,6 +131,36 @@
 
   .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
 
+  .filter-section { margin-bottom: 8px; }
+  .filter-section summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    font-size: 14px;
+    color: var(--ink-dim);
+    padding: 4px 0;
+  }
+  .filter-section summary::-webkit-details-marker { display: none; }
+  .filter-section summary .filter-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .filter-section summary .filter-chevron {
+    font-size: 10px;
+    transition: transform 0.15s;
+    color: var(--ink-dim);
+  }
+  .filter-section[open] summary .filter-chevron { transform: rotate(90deg); }
+  .filter-section summary .filter-status {
+    font-size: 11px;
+    color: var(--ink-dim);
+  }
+  .filter-section .filter-body { padding: 6px 0 4px; }
+
   .chip {
     font-size: 12.5px;
     padding: 6px 12px;
@@ -400,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.8.3</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.8.4</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -466,35 +496,55 @@
     <input type="hidden" id="lat" />
     <input type="hidden" id="lng" />
 
-    <label style="display:flex; align-items:center; justify-content:space-between;">
-      Formats
-      <span id="formatChipsToggle" style="font-size:11px; font-weight:400; color:var(--ink-dim); cursor:pointer; user-select:none;">none</span>
-    </label>
-    <div class="chips" id="formatChips">
-      <button class="chip on" data-format="standard">Standard</button>
-      <button class="chip on" data-format="3d">3D</button>
-      <button class="chip on" data-format="imax">IMAX</button>
-      <button class="chip on" data-format="dolby cinema">Dolby Cinema</button>
-      <button class="chip on" data-format="px rpx">RPX</button>
-      <button class="chip on" data-format="4dx">4DX</button>
-      <button class="chip on" data-format="screenx">ScreenX</button>
-      <button class="chip on" data-format="recliner">Recliner</button>
-      <button class="chip on" data-format="lg led">LG LED</button>
-    </div>
+    <details class="filter-section" id="formatSection">
+      <summary>
+        <span class="filter-label">
+          <span class="filter-chevron">▶</span>
+          Formats
+        </span>
+        <span class="filter-status" id="formatSectionStatus">All</span>
+      </summary>
+      <div class="filter-body">
+        <div style="display:flex; justify-content:flex-end; margin-bottom:4px;">
+          <span id="formatChipsToggle" style="font-size:11px; color:var(--ink-dim); cursor:pointer; user-select:none;">none</span>
+        </div>
+        <div class="chips" id="formatChips">
+          <button class="chip on" data-format="standard">Standard</button>
+          <button class="chip on" data-format="3d">3D</button>
+          <button class="chip on" data-format="imax">IMAX</button>
+          <button class="chip on" data-format="dolby cinema">Dolby Cinema</button>
+          <button class="chip on" data-format="px rpx">RPX</button>
+          <button class="chip on" data-format="4dx">4DX</button>
+          <button class="chip on" data-format="screenx">ScreenX</button>
+          <button class="chip on" data-format="recliner">Recliner</button>
+          <button class="chip on" data-format="lg led">LG LED</button>
+        </div>
+      </div>
+    </details>
 
-    <label style="display:flex; align-items:center; justify-content:space-between;">
-      Chains
-      <span id="chainChipsToggle" style="font-size:11px; font-weight:400; color:var(--ink-dim); cursor:pointer; user-select:none;">none</span>
-    </label>
-    <div class="chips" id="chainChips">
-      <button class="chip on" data-chain="amc">AMC</button>
-      <button class="chip on" data-chain="regal">Regal</button>
-      <button class="chip on" data-chain="cinemark">Cinemark</button>
-      <button class="chip on" data-chain="cinemawest">Cinema West</button>
-      <button class="chip on" data-chain="harkins">Harkins</button>
-      <button class="chip on" data-chain="regency">Regency</button>
-      <button class="chip on" data-chain="alamo">Alamo</button>
-    </div>
+    <details class="filter-section" id="chainSection">
+      <summary>
+        <span class="filter-label">
+          <span class="filter-chevron">▶</span>
+          Chains
+        </span>
+        <span class="filter-status" id="chainSectionStatus">All</span>
+      </summary>
+      <div class="filter-body">
+        <div style="display:flex; justify-content:flex-end; margin-bottom:4px;">
+          <span id="chainChipsToggle" style="font-size:11px; color:var(--ink-dim); cursor:pointer; user-select:none;">none</span>
+        </div>
+        <div class="chips" id="chainChips">
+          <button class="chip on" data-chain="amc">AMC</button>
+          <button class="chip on" data-chain="regal">Regal</button>
+          <button class="chip on" data-chain="cinemark">Cinemark</button>
+          <button class="chip on" data-chain="cinemawest">Cinema West</button>
+          <button class="chip on" data-chain="harkins">Harkins</button>
+          <button class="chip on" data-chain="regency">Regency</button>
+          <button class="chip on" data-chain="alamo">Alamo</button>
+        </div>
+      </div>
+    </details>
 
     <button class="search-btn" id="searchBtn" type="button">Find showtimes</button>
   </div>
@@ -660,10 +710,15 @@
     chip.addEventListener('click', () => chip.classList.toggle('on'));
   });
 
-  function setupChipGroupToggle(toggleEl, chipsEl) {
+  function setupChipGroupToggle(toggleEl, chipsEl, sectionEl, statusEl) {
     function updateLabel() {
-      const allOn = [...chipsEl.querySelectorAll('.chip')].every((c) => c.classList.contains('on'));
+      const chips = [...chipsEl.querySelectorAll('.chip')];
+      const onCount = chips.filter((c) => c.classList.contains('on')).length;
+      const allOn = onCount === chips.length;
       toggleEl.textContent = allOn ? 'none' : 'all';
+      if (statusEl) statusEl.textContent = allOn ? 'All' : `${onCount} of ${chips.length}`;
+      // Auto-open the section when something is deselected so the state is visible
+      if (sectionEl && !allOn) sectionEl.open = true;
     }
     chipsEl.addEventListener('click', updateLabel);
     toggleEl.addEventListener('click', () => {
@@ -672,8 +727,18 @@
       updateLabel();
     });
   }
-  setupChipGroupToggle(document.getElementById('formatChipsToggle'), document.getElementById('formatChips'));
-  setupChipGroupToggle(document.getElementById('chainChipsToggle'), document.getElementById('chainChips'));
+  setupChipGroupToggle(
+    document.getElementById('formatChipsToggle'),
+    document.getElementById('formatChips'),
+    document.getElementById('formatSection'),
+    document.getElementById('formatSectionStatus')
+  );
+  setupChipGroupToggle(
+    document.getElementById('chainChipsToggle'),
+    document.getElementById('chainChips'),
+    document.getElementById('chainSection'),
+    document.getElementById('chainSectionStatus')
+  );
 
   els.loadMoviesBtn.addEventListener('click', async () => {
     const lat = els.lat.value.trim();
@@ -1382,31 +1447,35 @@
     // more than one distinct format to actually choose between.
     const allFormatsOn = activeResultFormats.size === seenResultFormats.size;
     const filterChipsHtml = allFormats.length > 1
-      ? `<div style="margin-bottom:12px;">
-          <label style="display:flex; align-items:center; justify-content:space-between;">
-            Formats
-            <span style="font-size:11px; font-weight:400; color:var(--ink-dim); cursor:pointer; user-select:none;" onclick="${allFormatsOn ? 'setAllResultFormats(false)' : 'setAllResultFormats(true)'}">${allFormatsOn ? 'none' : 'all'}</span>
-          </label>
-          <div class="chips">${allFormats.map((f) => {
+      ? `<details class="filter-section" ${!allFormatsOn ? 'open' : ''}>
+          <summary>
+            <span class="filter-label"><span class="filter-chevron">▶</span>Formats</span>
+            <span class="filter-status">${allFormatsOn ? 'All' : `${activeResultFormats.size} of ${seenResultFormats.size}`}
+              &nbsp;<span style="cursor:pointer;" onclick="event.preventDefault();${allFormatsOn ? 'setAllResultFormats(false)' : 'setAllResultFormats(true)'}">${allFormatsOn ? 'none' : 'all'}</span>
+            </span>
+          </summary>
+          <div class="filter-body"><div class="chips">${allFormats.map((f) => {
             const on = activeResultFormats.has(f);
             return `<button class="chip ${on ? 'on' : ''}" onclick="toggleResultFormat(${JSON.stringify(f).replace(/"/g, '&quot;')})">${escapeHtml(f)}</button>`;
-          }).join('')}</div>
-        </div>`
+          }).join('')}</div></div>
+        </details>`
       : '';
 
     const allChainsOn = activeResultChains.size === seenResultChains.size;
     const chainChipsHtml = allChains.length > 1
-      ? `<div style="margin-bottom:12px;">
-          <label style="display:flex; align-items:center; justify-content:space-between;">
-            Chains
-            <span style="font-size:11px; font-weight:400; color:var(--ink-dim); cursor:pointer; user-select:none;" onclick="${allChainsOn ? 'setAllResultChains(false)' : 'setAllResultChains(true)'}">${allChainsOn ? 'none' : 'all'}</span>
-          </label>
-          <div class="chips">${allChains.map((c) => {
+      ? `<details class="filter-section" ${!allChainsOn ? 'open' : ''}>
+          <summary>
+            <span class="filter-label"><span class="filter-chevron">▶</span>Chains</span>
+            <span class="filter-status">${allChainsOn ? 'All' : `${activeResultChains.size} of ${seenResultChains.size}`}
+              &nbsp;<span style="cursor:pointer;" onclick="event.preventDefault();${allChainsOn ? 'setAllResultChains(false)' : 'setAllResultChains(true)'}">${allChainsOn ? 'none' : 'all'}</span>
+            </span>
+          </summary>
+          <div class="filter-body"><div class="chips">${allChains.map((c) => {
             const on = activeResultChains.has(c);
             const label = CHAIN_DISPLAY_NAMES[c] || c;
             return `<button class="chip ${on ? 'on' : ''}" onclick="toggleResultChain(${JSON.stringify(c).replace(/"/g, '&quot;')})">${escapeHtml(label)}</button>`;
-          }).join('')}</div>
-        </div>`
+          }).join('')}</div></div>
+        </details>`
       : '';
 
     // Sort toggle -- always rendered (unlike the format chips, which
