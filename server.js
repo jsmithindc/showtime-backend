@@ -2335,7 +2335,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               `Regal [${cinemaCode}]: found ${allPerformances.length} total performances, ` +
               `${movieMatches.length} matching "${movie}", ${inWindow.length} within your search window ` +
               `(pricing only these). Movies seen: ${[...new Set(allPerformances.map((p) => p.movieName))].join(", ") || "(none)"}. ` +
-              `Real times seen for "${movie}": ${movieMatches.map((p) => p.showTime.slice(0, 5)).join(", ") || "(none)"}`
+              `Real times seen for "${movie}": ${movieMatches.map((p) => `${p.showTime.slice(0, 5)}/${p.format}`).join(", ") || "(none)"}`
             );
             const MAX_PERFORMANCES_PER_THEATER = 5;
             const toPrice = inWindow.slice(0, MAX_PERFORMANCES_PER_THEATER);
