@@ -400,7 +400,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.7.4</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.7.5</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1319,9 +1319,16 @@
       const dt = new Date(y, m - 1, d);
       return dt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
     })();
+    // SerpApi canonical names use "City,State,United States" with no spaces.
+    // Format for display: add spaces, drop the country suffix.
+    const locationDisplay = (() => {
+      if (!data.locationResolved) return '(n/a)';
+      const parts = data.locationResolved.split(',').map((s) => s.trim()).filter((s) => s && s !== 'United States');
+      return parts.length >= 2 ? `${parts[0]}, ${parts[parts.length - 1]}` : parts.join(', ') || data.locationResolved;
+    })();
     els.statusLine.innerHTML = allResults.length
-      ? `${countLabel} ${subjectLabel}${runtimeLabel} on <b>${dateLabel}</b> (${priced} priced). Location resolved to: ${data.locationResolved || '(n/a)'}`
-      : `No ${opts.showMovieName ? 'movies fit that window' : `showings of <b>${data.movie}</b>${runtimeLabel} found within your window`} on <b>${dateLabel}</b>. Location resolved to: ${data.locationResolved || '(n/a)'}`;
+      ? `${countLabel} ${subjectLabel}${runtimeLabel} on <b>${dateLabel}</b> (${priced} priced). Location resolved to: ${locationDisplay}`
+      : `No ${opts.showMovieName ? 'movies fit that window' : `showings of <b>${data.movie}</b>${runtimeLabel} found within your window`} on <b>${dateLabel}</b>. Location resolved to: ${locationDisplay}`;
 
     // Stinger info only makes sense for a single specific movie, not the
     // "3 hours to kill" mode (which mixes many different movies) -- and
