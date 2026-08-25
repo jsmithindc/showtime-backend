@@ -2439,7 +2439,10 @@ app.get("/api/price-regal-showing", searchRateLimiter, async (req, res) => {
     if (!p || p.price == null) {
       return res.json({ price: null, creditsUsed: costTracker.total });
     }
-    const fmt = p.format || format || "Standard";
+    // format was already computed at listing time and passed in as a query
+    // param -- use it directly. p.format comes from deriveRegalFormat on a
+    // fake perf with attrNames: [], so it always returns "Standard".
+    const fmt = format || "Standard";
     const estimatedFee = estimateRegalFee(fmt);
     const [y, m, d] = dateISO.split("-");
     const regalDateFormatted = `${m}-${d}-${y}`;

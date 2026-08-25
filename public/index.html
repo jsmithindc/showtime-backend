@@ -394,7 +394,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.4.9</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.4.10</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -786,15 +786,16 @@
       params.set('place', place);
     }
 
+    // Request notification permission while still in the synchronous click
+    // handler -- browsers require a direct user gesture for this prompt and
+    // may silently ignore it if called after an await.
+    if ('Notification' in window && Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+
     els.searchBtn.disabled = true;
     els.searchBtn.textContent = 'Searching...';
     els.statusLine.textContent = 'Checking nearby theaters...';
-
-    // Request notification permission on first search so we can alert when
-    // results are ready even if the user has switched tabs.
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
 
     // When the user typed a place/zip instead of coordinates, geocode it
     // ONCE here before firing both /api/search and /api/search-regal.
