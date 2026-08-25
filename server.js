@@ -611,29 +611,22 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     });
   }
 
-  const now = new Date();
-  const todayISO = todayISOLocal();
-  const searchDateISO = date || todayISO;
-  const isToday = searchDateISO === todayISO;
-
   const wantedFormats = formats ? formats.split(",").map((f) => f.toLowerCase()) : null;
   const wantedChains = chains ? chains.split(",").map((c) => c.toLowerCase()) : null;
   const deadlineMinutes = toMinutesSinceMidnight(deadline);
-  // "Already started" and "deadline already passed" only mean anything
-  // relative to the current clock when searching today. For a future
-  // date, every time of day is still available -- there's no "already
-  // started" to filter out, so treat the current-time floor as 0.
-  // Use the client's UTC timestamp (clientTime) + the theater location's
-  // timezone to compute local time at the theaters. Render runs UTC;
-  // server getHours() is UTC, which is 4-5 hours ahead of Eastern US
-  // theaters and wrongly filters shows that haven't started yet.
-  // nowMinutes is resolved lazily after originLat/Lng are known.
   const originLat = Number(lat);
   const originLng = Number(lng);
 
-  // Compute nowMinutes in the theater's local timezone, not the server's UTC.
+  // Compute today's date and current time in the theater's local timezone
+  // using the client's UTC timestamp. The server runs UTC on Render, so
+  // server-local date/time is wrong for US theaters -- a PST user searching
+  // after 5pm already has the server in UTC "tomorrow", making isToday
+  // wrongly true for a user-selected tomorrow date.
   const theaterTimezone = getTimezoneForLocation(originLat, originLng);
   const clientTimestampMs = clientTime ? Number(clientTime) : Date.now();
+  const todayISOInZone = new Intl.DateTimeFormat("en-CA", { timeZone: theaterTimezone }).format(new Date(clientTimestampMs));
+  const searchDateISO = date || todayISOInZone;
+  const isToday = searchDateISO === todayISOInZone;
   const nowMinutes = isToday ? nowMinutesInZone(clientTimestampMs, theaterTimezone) : 0;
 
   const timeWindowWarning =
@@ -2203,16 +2196,15 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     }
   }
 
-  const now = new Date();
-  const todayISO = todayISOLocal();
-  const searchDateISO = date || todayISO;
-  const isToday = searchDateISO === todayISO;
   const wantedFormats = formats ? formats.split(",").map((f) => f.toLowerCase()) : null;
   const deadlineMinutes = toMinutesSinceMidnight(deadline);
   const originLat = Number(lat);
   const originLng = Number(lng);
   const theaterTimezone = getTimezoneForLocation(originLat, originLng);
   const clientTimestampMs = clientTime ? Number(clientTime) : Date.now();
+  const todayISOInZone = new Intl.DateTimeFormat("en-CA", { timeZone: theaterTimezone }).format(new Date(clientTimestampMs));
+  const searchDateISO = date || todayISOInZone;
+  const isToday = searchDateISO === todayISOInZone;
   const nowMinutes = isToday ? nowMinutesInZone(clientTimestampMs, theaterTimezone) : 0;
 
   try {
