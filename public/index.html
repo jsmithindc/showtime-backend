@@ -858,7 +858,6 @@
 
     // Regal streams results via SSE (EventSource) so cards appear as each
     // performance finishes pricing -- no waiting for all to complete first.
-    let regalEs = null;
     const regalDonePromise = wantsRegal ? new Promise((resolve) => {
       const regalResults = [];
       regalEs = new EventSource(`/api/search-regal?${regalParams.toString()}`);
@@ -1179,6 +1178,7 @@
 
   let lastRenderData = null;
   let lastRenderOpts = null;
+  let regalEs = null;
 
   // Mirrors the server-side sorting logic in server.js -- needed here
   // specifically for re-sorting after Regal's results merge in
