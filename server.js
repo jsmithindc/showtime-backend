@@ -446,6 +446,11 @@ function nowMinutesInZone(timestampMs, timezone) {
 // on its own.
 const FORMAT_SYNONYMS = {
   digital: "standard",
+  // Cinemark "Standard Luxury Lounger" is stripped to "Luxury Lounger" for
+  // display, but "Luxury Lounger" has no "standard" substring for the filter
+  // to match. Map it back so the Standard chip still includes these showings.
+  "luxury lounger": "standard",
+  "luxury lounger d-box": "standard",
 };
 
 function matchesWantedFormat(realFormat, wantedFormats) {

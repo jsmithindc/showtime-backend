@@ -400,7 +400,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.6.6</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.6.7</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -764,6 +764,7 @@
     const deadline = els.deadline.value.trim();
 
     if (regalEs) { regalEs.close(); regalEs = null; }
+    regalStillChecking = false;
     els.banners.innerHTML = '';
     els.results.innerHTML = '';
     activeResultFormats = new Set(); seenResultFormats = new Set(); // fresh search -- reset to "all formats on"
@@ -920,14 +921,12 @@
       // it's clear more might still be coming, not that the search is
       // simply done.
       if (wantsRegal) {
-        const regalNote = document.createElement('div');
-        regalNote.className = 'banner';
-        regalNote.style.cssText = 'margin-top:8px; font-size:12px; color:#8a8478;';
-        regalNote.textContent = 'Checking Regal pricing...';
-        els.banners.appendChild(regalNote);
+        regalStillChecking = true;
+        renderResults(lastRenderData, lastRenderOpts); // re-render to show the "Checking Regal..." banner
 
         regalDonePromise.then((regalResults) => {
-          regalNote.remove();
+          regalStillChecking = false;
+          renderResults(lastRenderData, lastRenderOpts); // re-render to remove the banner
           notifySearchComplete((lastRenderData?.results?.length ?? 0));
         });
       }
@@ -1183,6 +1182,7 @@
   let lastRenderData = null;
   let lastRenderOpts = null;
   let regalEs = null;
+  let regalStillChecking = false;
 
   // Mirrors the server-side sorting logic in server.js -- needed here
   // specifically for re-sorting after Regal's results merge in
@@ -1209,6 +1209,9 @@
     if (data.note) banners.push(`<div class="banner warn">${data.note}</div>`);
     if (data.locationResolutionError) {
       banners.push(`<div class="banner warn">Location lookup: ${data.locationResolutionError}</div>`);
+    }
+    if (regalStillChecking) {
+      banners.push(`<div class="banner" style="margin-top:8px; font-size:12px; color:#8a8478;">Checking Regal pricing...</div>`);
     }
     els.banners.innerHTML = banners.join('');
 
