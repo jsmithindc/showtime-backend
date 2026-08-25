@@ -400,7 +400,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.7.0</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.7.1</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1369,9 +1369,9 @@
     const allFormatsOn = activeResultFormats.size === seenResultFormats.size;
     const filterChipsHtml = allFormats.length > 1
       ? `<div style="margin-bottom:12px;">
-          <label style="display:flex; align-items:center; justify-content:space-between; font-size:11px; color:var(--ink-dim); margin-bottom:4px;">
+          <label style="display:flex; align-items:center; justify-content:space-between;">
             Formats
-            <span style="cursor:pointer; user-select:none;" onclick="${allFormatsOn ? 'setAllResultFormats(false)' : 'setAllResultFormats(true)'}">${allFormatsOn ? 'none' : 'all'}</span>
+            <span style="font-size:11px; font-weight:400; color:var(--ink-dim); cursor:pointer; user-select:none;" onclick="${allFormatsOn ? 'setAllResultFormats(false)' : 'setAllResultFormats(true)'}">${allFormatsOn ? 'none' : 'all'}</span>
           </label>
           <div class="chips">${allFormats.map((f) => {
             const on = activeResultFormats.has(f);
@@ -1383,9 +1383,9 @@
     const allChainsOn = activeResultChains.size === seenResultChains.size;
     const chainChipsHtml = allChains.length > 1
       ? `<div style="margin-bottom:12px;">
-          <label style="display:flex; align-items:center; justify-content:space-between; font-size:11px; color:var(--ink-dim); margin-bottom:4px;">
+          <label style="display:flex; align-items:center; justify-content:space-between;">
             Chains
-            <span style="cursor:pointer; user-select:none;" onclick="${allChainsOn ? 'setAllResultChains(false)' : 'setAllResultChains(true)'}">${allChainsOn ? 'none' : 'all'}</span>
+            <span style="font-size:11px; font-weight:400; color:var(--ink-dim); cursor:pointer; user-select:none;" onclick="${allChainsOn ? 'setAllResultChains(false)' : 'setAllResultChains(true)'}">${allChainsOn ? 'none' : 'all'}</span>
           </label>
           <div class="chips">${allChains.map((c) => {
             const on = activeResultChains.has(c);
