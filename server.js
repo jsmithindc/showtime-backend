@@ -2389,6 +2389,11 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
 
     sseWrite("done", { movie, searchDate: searchDateISO });
     res.end();
+  } catch (err) {
+    console.error("Regal search-regal outer error:", err);
+    sseWrite("done", { movie, searchDate: searchDateISO, error: err.message });
+    if (!res.writableEnded) res.end();
+  }
 });
 
 // On-demand pricing for a single Regal performance -- used by the
