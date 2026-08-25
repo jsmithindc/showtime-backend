@@ -2411,6 +2411,8 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       )
     );
 
+    const fmtSummary = [...new Set(results.map((r) => r.format))].join(", ") || "(none)";
+    console.error(`Regal search-regal sending ${results.length} result(s), ${overflowResults.length} overflow. Formats in results: ${fmtSummary}`);
     res.json({ results, overflow: overflowResults, regalScrapeDoCreditsUsed: regalScrapeDoCallsUsed, regalCreditsByProvider });
   } catch (err) {
     console.error("Regal search failed:", err);
