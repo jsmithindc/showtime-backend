@@ -2337,32 +2337,10 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               `(pricing only these). Movies seen: ${[...new Set(allPerformances.map((p) => p.movieName))].join(", ") || "(none)"}. ` +
               `Real times seen for "${movie}": ${movieMatches.map((p) => `${p.showTime.slice(0, 5)}/${p.format}`).join(", ") || "(none)"}`
             );
-            const MAX_PERFORMANCES_PER_THEATER = 5;
-            const toPrice = inWindow.slice(0, MAX_PERFORMANCES_PER_THEATER);
+            const toPrice = inWindow;
             console.error(
-              `Regal [${cinemaCode}]: pricing these ${toPrice.length}: ${toPrice.map((p) => `${p.showTime.slice(0, 5)}/${p.format}`).join(", ")}` +
-              (inWindow.length > MAX_PERFORMANCES_PER_THEATER ? ` | overflow: ${inWindow.slice(MAX_PERFORMANCES_PER_THEATER).map((p) => `${p.showTime.slice(0, 5)}/${p.format}`).join(", ")}` : "")
+              `Regal [${cinemaCode}]: pricing all ${toPrice.length}: ${toPrice.map((p) => `${p.showTime.slice(0, 5)}/${p.format}`).join(", ")}`
             );
-            if (inWindow.length > MAX_PERFORMANCES_PER_THEATER) {
-              console.error(
-                `Regal: capping ${theaterName} at ${MAX_PERFORMANCES_PER_THEATER} priced showings (had ${inWindow.length} within the search window) to protect real credits.`
-              );
-            }
-            // Build unpriced result objects for any showings beyond the cap so
-            // the frontend can offer a "show N more" option without re-searching.
-            const overflowPerfs = inWindow.slice(MAX_PERFORMANCES_PER_THEATER);
-            for (const p of overflowPerfs) {
-              const built = regalResultIfWithinWindow({
-                theaterName,
-                distanceMin: theater.distanceMin,
-                startTimeRaw: p.showTime.slice(0, 5),
-                format: p.format,
-                performanceId: p.performanceId,
-                movieId: p.movieId,
-                cinemaCode,
-              });
-              if (built) overflowResults.push(built);
-            }
 
             const priced = await getRegalPricedShowtimes({
               cinemaCode: cinemaCode,
