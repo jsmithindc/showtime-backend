@@ -42,6 +42,7 @@ const REGENCY_THEATER_MAP = require("./lib/regency-theater-map");
 const { getShowtimesForLocation: getRegencyShowtimesForLocation, getTicketPricing: getRegencyTicketPricing, getFilmIdMap: getRegencyFilmIdMap } = require("./lib/priceAdapters/regency-official");
 const { getAlamoCinemasInRange, getAlamoShowtimesForCinemas, getAlamoSessionPrice } = require("./lib/priceAdapters/alamo-official");
 const { getMarcusCinemasInRange, getMarcusShowtimesForCinemas, getMarcusSessionPrice } = require("./lib/priceAdapters/marcus-official");
+const { getLandmarkTheatersInRange, getLandmarkShowtimesForTheaters } = require("./lib/priceAdapters/landmark-official");
 const { matchesMovie } = require("./lib/priceAdapters/serpapi");
 const CINEMARK_THEATER_SLUGS = require("./lib/cinemark-theater-slugs");
 const { getRuntimeForMovieAtTheater, getCinemarkMovieIdForTitle } = require("./lib/cinemark-runtime-scraper");
@@ -670,6 +671,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     const harkinsDirectTheaters = [];
     const alamoDirectTheaters = [];
     const marcusDirectTheaters = [];
+    const landmarkDirectTheaters = [];
     let amcDirectError = null;
 
     // ---- Phase 1: broad theater discovery -- run everything in parallel ----
@@ -775,6 +777,18 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
             console.error(
               `Marcus direct: ${marcusDirectTheaters.length} cinemas within ${radiusMin}min` +
               (marcusDirectTheaters.length ? ": " + marcusDirectTheaters.map((t) => t.name).join(", ") : "")
+            );
+          })
+        : Promise.resolve(),
+
+      // Landmark Theatres: static theater list, pure distance matching
+      wantChain("landmark")
+        ? Promise.resolve().then(() => {
+            const found = getLandmarkTheatersInRange({ originLat, originLng, discoveryRadiusMin, estimatedMinutesAway });
+            landmarkDirectTheaters.push(...found);
+            console.error(
+              `Landmark direct: ${landmarkDirectTheaters.length} theater(s) within ${radiusMin}min` +
+              (landmarkDirectTheaters.length ? ": " + landmarkDirectTheaters.map((t) => t.name).join(", ") : "")
             );
           })
         : Promise.resolve(),
@@ -914,7 +928,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // native discovery. Kept as real, working code rather than deleted,
     // so a hypothetical future 5th chain without its own discovery still
     // has somewhere to fall back to.
-    const CHAINS_WITH_NATIVE_DISCOVERY = new Set(["regal", "amc", "cinemark", "cinemawest", "harkins", "regency", "alamo", "marcus"]);
+    const CHAINS_WITH_NATIVE_DISCOVERY = new Set(["regal", "amc", "cinemark", "cinemawest", "harkins", "regency", "alamo", "marcus", "landmark"]);
     function chainsMatchingTheater(theaterName) {
       const chains = [];
       // Regal, AMC, Harkins, and Cinemark are discovered separately via their own APIs -- not in theatersInRange
@@ -928,7 +942,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       return !chains.every((c) => CHAINS_WITH_NATIVE_DISCOVERY.has(c));
     });
 
-    if (theatersInRangeAll.length > 0 && knownChainTheaterNames.size === 0 && regalDirectTheaters.length === 0 && amcDirectTheaters.length === 0 && harkinsDirectTheaters.length === 0 && cinemarkDirectTheaters.length === 0 && alamoDirectTheaters.length === 0 && marcusDirectTheaters.length === 0) {
+    if (theatersInRangeAll.length > 0 && knownChainTheaterNames.size === 0 && regalDirectTheaters.length === 0 && amcDirectTheaters.length === 0 && harkinsDirectTheaters.length === 0 && cinemarkDirectTheaters.length === 0 && alamoDirectTheaters.length === 0 && marcusDirectTheaters.length === 0 && landmarkDirectTheaters.length === 0) {
       return res.json({
         movie,
         theatersFound: nearbyTheaters.length,
@@ -1996,6 +2010,38 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         } catch (err) {
           console.error(`Marcus showtime discovery failed:`, err.message);
         }
+      }
+    }
+
+    // ---- Phase 11: Landmark Theatres -- gatsby-source-boxofficeapi schedule + pre-generated booking URLs ----
+    // No pricing (booking.landmarktheatres.com is Cloudflare-protected).
+    // Booking URLs are embedded directly in the schedule response; no extra call needed.
+    if (landmarkDirectTheaters.length > 0) {
+      try {
+        const landmarkEntries = await getLandmarkShowtimesForTheaters({
+          theaters: landmarkDirectTheaters,
+          movieTitle: movie,
+          dateISO: searchDateISO,
+        });
+        for (const entry of landmarkEntries) {
+          const built = buildResultIfWithinWindow({
+            theaterName: entry.cinema.name,
+            distanceMin: entry.cinema.distanceMin,
+            startTimeRaw: entry.startTimeRaw,
+            format: entry.format,
+            price: null,
+            priceSource: null,
+            bookingLink: entry.bookingLink,
+            chain: "landmark",
+          });
+          if (built) results.push(built);
+        }
+        console.error(
+          `Landmark: fetched ${landmarkEntries.length} session(s) matching "${movie}" on ${searchDateISO} ` +
+          `across ${landmarkDirectTheaters.length} theater(s).`
+        );
+      } catch (err) {
+        console.error(`Landmark showtime discovery failed:`, err.message);
       }
     }
 
