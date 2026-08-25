@@ -40,6 +40,7 @@ const { getHarkinsTheaters } = require("./lib/harkins-theaters");
 const { getShowtimesForMovie: getHarkinsShowtimesForMovie, getTicketPricing: getHarkinsTicketPricing, getRuntimeForMovie: getHarkinsRuntimeForMovie } = require("./lib/priceAdapters/harkins-official");
 const REGENCY_THEATER_MAP = require("./lib/regency-theater-map");
 const { getShowtimesForLocation: getRegencyShowtimesForLocation, getTicketPricing: getRegencyTicketPricing, getFilmIdMap: getRegencyFilmIdMap } = require("./lib/priceAdapters/regency-official");
+const { getAlamoCinemasInRange, getAlamoShowtimesForCinemas } = require("./lib/priceAdapters/alamo-official");
 const { matchesMovie } = require("./lib/priceAdapters/serpapi");
 const CINEMARK_THEATER_SLUGS = require("./lib/cinemark-theater-slugs");
 const { getRuntimeForMovieAtTheater, getCinemarkMovieIdForTitle } = require("./lib/cinemark-runtime-scraper");
@@ -666,6 +667,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     const regalDirectTheaters = [];
     const amcDirectTheaters = [];
     const harkinsDirectTheaters = [];
+    const alamoDirectTheaters = [];
     let amcDirectError = null;
 
     // ---- Phase 1: broad theater discovery -- run everything in parallel ----
@@ -749,6 +751,18 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
               );
             })
             .catch((err) => console.error("Harkins direct: theater list fetch failed:", err.message))
+        : Promise.resolve(),
+
+      // Alamo Drafthouse: static cinema list, pure distance matching (no API call at discovery time)
+      wantChain("alamo")
+        ? Promise.resolve().then(() => {
+            const found = getAlamoCinemasInRange({ originLat, originLng, discoveryRadiusMin, estimatedMinutesAway });
+            alamoDirectTheaters.push(...found);
+            console.error(
+              `Alamo direct: ${alamoDirectTheaters.length} cinemas within ${radiusMin}min` +
+              (alamoDirectTheaters.length ? ": " + alamoDirectTheaters.map((t) => t.name).join(", ") : "")
+            );
+          })
         : Promise.resolve(),
     ]);
 
@@ -886,7 +900,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // native discovery. Kept as real, working code rather than deleted,
     // so a hypothetical future 5th chain without its own discovery still
     // has somewhere to fall back to.
-    const CHAINS_WITH_NATIVE_DISCOVERY = new Set(["regal", "amc", "cinemark", "cinemawest", "harkins", "regency"]);
+    const CHAINS_WITH_NATIVE_DISCOVERY = new Set(["regal", "amc", "cinemark", "cinemawest", "harkins", "regency", "alamo"]);
     function chainsMatchingTheater(theaterName) {
       const chains = [];
       // Regal, AMC, Harkins, and Cinemark are discovered separately via their own APIs -- not in theatersInRange
@@ -900,13 +914,13 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       return !chains.every((c) => CHAINS_WITH_NATIVE_DISCOVERY.has(c));
     });
 
-    if (theatersInRangeAll.length > 0 && knownChainTheaterNames.size === 0 && regalDirectTheaters.length === 0 && amcDirectTheaters.length === 0 && harkinsDirectTheaters.length === 0 && cinemarkDirectTheaters.length === 0) {
+    if (theatersInRangeAll.length > 0 && knownChainTheaterNames.size === 0 && regalDirectTheaters.length === 0 && amcDirectTheaters.length === 0 && harkinsDirectTheaters.length === 0 && cinemarkDirectTheaters.length === 0 && alamoDirectTheaters.length === 0) {
       return res.json({
         movie,
         theatersFound: nearbyTheaters.length,
         theatersInRange: theatersInRangeAll.length,
         results: [],
-        note: "Found theaters in range, but none matched a known chain (AMC/Regal/Cinemark/Cinema West) -- nothing to price.",
+        note: "Found theaters in range, but none matched a known chain (AMC/Regal/Cinemark/Cinema West/Alamo) -- nothing to price.",
         debug: {
           originLat,
           originLng,
@@ -1849,6 +1863,38 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         })
       )
     );
+
+    // ---- Phase 9: Alamo Drafthouse -- public v2 API, showtimes only (no pricing) ----
+    if (alamoDirectTheaters.length > 0) {
+      try {
+        const alamoEntries = await getAlamoShowtimesForCinemas({
+          cinemas: alamoDirectTheaters,
+          movieTitle: movie,
+          dateISO: searchDateISO,
+        });
+
+        console.error(
+          `Alamo: fetched ${alamoEntries.length} session(s) matching "${movie}" on ${searchDateISO} ` +
+          `across ${alamoDirectTheaters.length} cinema(s).`
+        );
+
+        for (const entry of alamoEntries) {
+          const built = buildResultIfWithinWindow({
+            theaterName: entry.cinema.name,
+            distanceMin: entry.cinema.distanceMin,
+            startTimeRaw: entry.startTimeRaw,
+            format: entry.format,
+            price: null,
+            priceSource: null,
+            bookingLink: entry.bookingLink,
+            chain: "alamo",
+          });
+          if (built) results.push(built);
+        }
+      } catch (err) {
+        console.error(`Alamo showtime discovery failed:`, err.message);
+      }
+    }
 
     // For AMC results eligible for the Stubs Tuesday/Wednesday discount,
     // sort (and rank "cheapest") by the discounted price instead of the
