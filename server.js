@@ -2255,11 +2255,21 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     const regalPricingDisabled = process.env.DISABLE_REGAL_PRICING === "true";
     if (regalPricingDisabled) {
       console.error("Regal pricing skipped: DISABLE_REGAL_PRICING=true (protecting real credits). Set it to false in start.sh to re-enable.");
-      return res.json({ results: [], regalScrapeDoCreditsUsed: 0, regalCreditsByProvider: {} });
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+      res.write(`event: done\ndata: ${JSON.stringify({ movie })}\n\n`);
+      return res.end();
     }
 
     if (regalDirectTheaters.length === 0) {
-      return res.json({ results: [], regalScrapeDoCreditsUsed: 0, regalCreditsByProvider: {} });
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+      res.write(`event: done\ndata: ${JSON.stringify({ movie })}\n\n`);
+      return res.end();
     }
 
     // Deduplicate by code -- Regal API returns each theater once, but be safe.

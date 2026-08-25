@@ -858,6 +858,10 @@
 
     // Regal streams results via SSE (EventSource) so cards appear as each
     // performance finishes pricing -- no waiting for all to complete first.
+    // Snapshot non-Regal results now so incremental merges don't double-count
+    // Regal cards that were already appended in a previous SSE event.
+    const baseResultsSnapshot = (lastRenderData && lastRenderData.results) ? [...lastRenderData.results] : [];
+    const baseDataSnapshot = lastRenderData || {};
     const regalDonePromise = wantsRegal ? new Promise((resolve) => {
       const regalResults = [];
       regalEs = new EventSource(`/api/search-regal?${regalParams.toString()}`);
@@ -867,8 +871,8 @@
           const result = JSON.parse(e.data);
           regalResults.push(result);
           const merged = {
-            ...(lastRenderData || {}),
-            results: [...((lastRenderData && lastRenderData.results) || []), ...regalResults],
+            ...baseDataSnapshot,
+            results: [...baseResultsSnapshot, ...regalResults],
           };
           merged.results.sort((a, b) => {
             const pa = effectivePriceForSorting(a), pb = effectivePriceForSorting(b);
