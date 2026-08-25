@@ -400,7 +400,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.6.3</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.6.4</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -858,10 +858,6 @@
 
     // Regal streams results via SSE (EventSource) so cards appear as each
     // performance finishes pricing -- no waiting for all to complete first.
-    // Snapshot non-Regal results now so incremental merges don't double-count
-    // Regal cards that were already appended in a previous SSE event.
-    const baseResultsSnapshot = (lastRenderData && lastRenderData.results) ? [...lastRenderData.results] : [];
-    const baseDataSnapshot = lastRenderData || {};
     const regalDonePromise = wantsRegal ? new Promise((resolve) => {
       const regalResults = [];
       regalEs = new EventSource(`/api/search-regal?${regalParams.toString()}`);
@@ -870,9 +866,13 @@
         try {
           const result = JSON.parse(e.data);
           regalResults.push(result);
+          // Filter Regal results out of lastRenderData each time so we don't
+          // double-count cards from previous SSE events (renderResults updates
+          // lastRenderData, which would otherwise accumulate Regal results).
+          const nonRegalBase = (lastRenderData?.results || []).filter((r) => r.chain !== 'regal');
           const merged = {
-            ...baseDataSnapshot,
-            results: [...baseResultsSnapshot, ...regalResults],
+            ...(lastRenderData || {}),
+            results: [...nonRegalBase, ...regalResults],
           };
           merged.results.sort((a, b) => {
             const pa = effectivePriceForSorting(a), pb = effectivePriceForSorting(b);
@@ -1518,6 +1518,7 @@
     { match: 'd box', text: 'Motion seating that moves in sync with the on-screen action -- similar in spirit to 4DX, but without the added environmental effects like wind or scent.' },
     { match: 'dbox', text: 'Motion seating that moves in sync with the on-screen action -- similar in spirit to 4DX, but without the added environmental effects like wind or scent.' },
     { match: 'luxury lounger', text: 'Extra-wide, plush reclining lounge seating -- a comfort upgrade on its own, distinct from D-BOX\'s motorized motion seating (though some auditoriums combine both).' },
+    { match: 'screenx', text: 'A 270° panoramic format that extends the image onto the left and right walls of the auditorium -- no glasses required. Available only at select Regal locations.' },
   ];
 
   function getFormatDescription(format) {
