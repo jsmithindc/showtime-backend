@@ -394,7 +394,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.38</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.39</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1334,20 +1334,22 @@
       return;
     }
 
-    // Server already sorts by price, but distance mode needs its own
-    // ordering -- sorting a COPY here rather than the shared `results`
-    // array, since that array is also used just above (and would be,
-    // in future changes) for counts/filters that shouldn't silently
-    // depend on which sort mode happens to be active.
-    const displayResults = resultSortMode === 'distance'
-      ? [...results].sort((a, b) => {
-          const da = a.distanceMin, db = b.distanceMin;
-          if (da == null && db == null) return 0;
-          if (da == null) return 1;
-          if (db == null) return -1;
-          return da - db;
-        })
-      : results;
+    // Always sort a copy -- overflow items appended client-side aren't
+    // pre-sorted by the server, so price mode needs an explicit sort too.
+    const displayResults = [...results].sort((a, b) => {
+      if (resultSortMode === 'distance') {
+        const da = a.distanceMin, db = b.distanceMin;
+        if (da == null && db == null) return 0;
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return da - db;
+      }
+      const pa = effectivePriceForSorting(a), pb = effectivePriceForSorting(b);
+      if (pa == null && pb == null) return 0;
+      if (pa == null) return 1;
+      if (pb == null) return -1;
+      return pa - pb;
+    });
 
     // The "Cheapest" tag has to identify the true cheapest result by
     // PRICE, regardless of what order it's currently being displayed
