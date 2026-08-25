@@ -400,7 +400,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.6.8</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.6.9</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -466,7 +466,10 @@
     <input type="hidden" id="lat" />
     <input type="hidden" id="lng" />
 
-    <label>Formats</label>
+    <label style="display:flex; align-items:center; justify-content:space-between;">
+      Formats
+      <span id="formatChipsToggle" style="font-size:11px; font-weight:400; color:var(--ink-dim); cursor:pointer; user-select:none;">none</span>
+    </label>
     <div class="chips" id="formatChips">
       <button class="chip on" data-format="standard">Standard</button>
       <button class="chip on" data-format="3d">3D</button>
@@ -479,7 +482,10 @@
       <button class="chip on" data-format="lg led">LG LED</button>
     </div>
 
-    <label>Chains</label>
+    <label style="display:flex; align-items:center; justify-content:space-between;">
+      Chains
+      <span id="chainChipsToggle" style="font-size:11px; font-weight:400; color:var(--ink-dim); cursor:pointer; user-select:none;">none</span>
+    </label>
     <div class="chips" id="chainChips">
       <button class="chip on" data-chain="amc">AMC</button>
       <button class="chip on" data-chain="regal">Regal</button>
@@ -652,6 +658,21 @@
   document.querySelectorAll('.chip').forEach((chip) => {
     chip.addEventListener('click', () => chip.classList.toggle('on'));
   });
+
+  function setupChipGroupToggle(toggleEl, chipsEl) {
+    function updateLabel() {
+      const allOn = [...chipsEl.querySelectorAll('.chip')].every((c) => c.classList.contains('on'));
+      toggleEl.textContent = allOn ? 'none' : 'all';
+    }
+    chipsEl.addEventListener('click', updateLabel);
+    toggleEl.addEventListener('click', () => {
+      const allOn = [...chipsEl.querySelectorAll('.chip')].every((c) => c.classList.contains('on'));
+      chipsEl.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', !allOn));
+      updateLabel();
+    });
+  }
+  setupChipGroupToggle(document.getElementById('formatChipsToggle'), document.getElementById('formatChips'));
+  setupChipGroupToggle(document.getElementById('chainChipsToggle'), document.getElementById('chainChips'));
 
   els.loadMoviesBtn.addEventListener('click', async () => {
     const lat = els.lat.value.trim();
