@@ -1868,6 +1868,8 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // Pricing: GET /s/mother/v1/app/seats/{cinemaId}/{sessionId}
     // Returns areas[].ticketClassInfos[].defaultPriceInCents -- flat per-seat price, no auth needed.
     // CONFIRMED REAL 2026-08-25: Austin $7.58, DTLA $9.00.
+    // Convenience fee: $2.19 (confirmed real from user checkout receipt).
+    const ALAMO_FEE = 2.19;
     if (alamoDirectTheaters.length > 0) {
       try {
         const alamoEntries = await getAlamoShowtimesForCinemas({
@@ -1896,10 +1898,13 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 
               let price = null;
               let priceSource = null;
+              let priceExtras = {};
               try {
                 const pricing = await getAlamoSessionPrice(entry.cinema.cinemaId, entry.sessionId);
-                price = pricing.priceInCents / 100;
+                const basePrice = pricing.priceInCents / 100;
+                price = Math.round((basePrice + ALAMO_FEE) * 100) / 100;
                 priceSource = "alamo-direct";
+                priceExtras = { priceBeforeFee: basePrice, estimatedFee: ALAMO_FEE, feeStatus: "confirmed" };
               } catch (err) {
                 console.error(`Alamo pricing failed for ${entry.cinema.name} session ${entry.sessionId}:`, err.message);
               }
@@ -1911,6 +1916,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                 format: entry.format,
                 price,
                 priceSource,
+                priceExtras,
                 bookingLink: entry.bookingLink,
                 chain: "alamo",
               });
