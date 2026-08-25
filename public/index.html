@@ -394,7 +394,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.37</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.38</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1395,9 +1395,9 @@
           performanceId: r.performanceId,
           movie,
           dateISO,
-          theaterName: r.theaterName,
           startTime: r.startTime,
           format: r.format || 'Standard',
+          ...(r.movieId ? { movieId: r.movieId } : {}),
         });
         const data = await fetch(`/api/price-regal-showing?${params}`).then((res) => res.json());
         if (data.price != null) {

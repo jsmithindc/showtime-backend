@@ -2272,7 +2272,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
 
     const realRuntimeMin = await getRuntimeMinutes(movie, RUNTIME_MIN, getHarkinsRuntimeForMovie);
 
-    function regalResultIfWithinWindow({ theaterName, distanceMin, startTimeRaw, format, price, bookingLink, priceExtras, performanceId, cinemaCode: perfCinemaCode }) {
+    function regalResultIfWithinWindow({ theaterName, distanceMin, startTimeRaw, format, price, bookingLink, priceExtras, performanceId, movieId: perfMovieId, cinemaCode: perfCinemaCode }) {
       const fmt = format || "Standard";
       const startMin = parseGoogleTime(startTimeRaw);
       if (startMin === null) return null;
@@ -2296,7 +2296,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
         priceSource: "regal-direct",
         // Included so the frontend can call /api/price-regal-showing to
         // fetch pricing on demand (used for the overflow "Show them" path).
-        ...(performanceId ? { performanceId, cinemaCode: perfCinemaCode } : {}),
+        ...(performanceId ? { performanceId, movieId: perfMovieId, cinemaCode: perfCinemaCode } : {}),
         ...(priceExtras || {}),
       };
     }
@@ -2354,6 +2354,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
                 startTimeRaw: p.showTime.slice(0, 5),
                 format: p.format,
                 performanceId: p.performanceId,
+                movieId: p.movieId,
                 cinemaCode,
               });
               if (built) overflowResults.push(built);
@@ -2413,7 +2414,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
 // frontend's overflow "Show them" path to fetch a real ticket price
 // for showings that were beyond the per-theater cap during the main search.
 app.get("/api/price-regal-showing", searchRateLimiter, async (req, res) => {
-  const { cinemaCode, performanceId, movie, dateISO, theaterName, distanceMin, startTime, format } = req.query;
+  const { cinemaCode, performanceId, movieId, movie, dateISO, startTime, format } = req.query;
   if (!cinemaCode || !performanceId || !movie || !dateISO) {
     return res.status(400).json({ error: "cinemaCode, performanceId, movie, and dateISO are required" });
   }
@@ -2426,9 +2427,8 @@ app.get("/api/price-regal-showing", searchRateLimiter, async (req, res) => {
       preDiscoveredPerformances: [{
         performanceId,
         showTime: startTime ? startTime + ":00" : null,
-        movieId: null,
+        movieId: movieId || null,
         movieName: movie,
-        screenType: null,
         screenName: null,
         attrNames: [],
         format: format || "Standard",
@@ -2443,8 +2443,9 @@ app.get("/api/price-regal-showing", searchRateLimiter, async (req, res) => {
     const estimatedFee = estimateRegalFee(fmt);
     const [y, m, d] = dateISO.split("-");
     const regalDateFormatted = `${m}-${d}-${y}`;
-    const bookingLink = p.movieId
-      ? `https://www.regmovies.com/movies/${toUrlSlug(movie)}-${p.movieId.toLowerCase()}?date=${regalDateFormatted}&site=${cinemaCode}&id=${performanceId}`
+    const resolvedMovieId = p.movieId || movieId;
+    const bookingLink = resolvedMovieId
+      ? `https://www.regmovies.com/movies/${toUrlSlug(movie)}-${resolvedMovieId.toLowerCase()}?date=${regalDateFormatted}&site=${cinemaCode}&id=${performanceId}`
       : null;
     res.json({
       price: Math.round((p.price + estimatedFee) * 100) / 100,
