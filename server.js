@@ -41,6 +41,7 @@ const { getShowtimesForMovie: getHarkinsShowtimesForMovie, getTicketPricing: get
 const REGENCY_THEATER_MAP = require("./lib/regency-theater-map");
 const { getShowtimesForLocation: getRegencyShowtimesForLocation, getTicketPricing: getRegencyTicketPricing, getFilmIdMap: getRegencyFilmIdMap } = require("./lib/priceAdapters/regency-official");
 const { getAlamoCinemasInRange, getAlamoShowtimesForCinemas, getAlamoSessionPrice } = require("./lib/priceAdapters/alamo-official");
+const { getMarcusCinemasInRange, getMarcusShowtimesForCinemas, getMarcusSessionPrice } = require("./lib/priceAdapters/marcus-official");
 const { matchesMovie } = require("./lib/priceAdapters/serpapi");
 const CINEMARK_THEATER_SLUGS = require("./lib/cinemark-theater-slugs");
 const { getRuntimeForMovieAtTheater, getCinemarkMovieIdForTitle } = require("./lib/cinemark-runtime-scraper");
@@ -668,6 +669,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     const amcDirectTheaters = [];
     const harkinsDirectTheaters = [];
     const alamoDirectTheaters = [];
+    const marcusDirectTheaters = [];
     let amcDirectError = null;
 
     // ---- Phase 1: broad theater discovery -- run everything in parallel ----
@@ -761,6 +763,18 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
             console.error(
               `Alamo direct: ${alamoDirectTheaters.length} cinemas within ${radiusMin}min` +
               (alamoDirectTheaters.length ? ": " + alamoDirectTheaters.map((t) => t.name).join(", ") : "")
+            );
+          })
+        : Promise.resolve(),
+
+      // Marcus Theatres: static cinema list, pure distance matching
+      wantChain("marcus")
+        ? Promise.resolve().then(() => {
+            const found = getMarcusCinemasInRange({ originLat, originLng, discoveryRadiusMin, estimatedMinutesAway });
+            marcusDirectTheaters.push(...found);
+            console.error(
+              `Marcus direct: ${marcusDirectTheaters.length} cinemas within ${radiusMin}min` +
+              (marcusDirectTheaters.length ? ": " + marcusDirectTheaters.map((t) => t.name).join(", ") : "")
             );
           })
         : Promise.resolve(),
@@ -900,7 +914,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // native discovery. Kept as real, working code rather than deleted,
     // so a hypothetical future 5th chain without its own discovery still
     // has somewhere to fall back to.
-    const CHAINS_WITH_NATIVE_DISCOVERY = new Set(["regal", "amc", "cinemark", "cinemawest", "harkins", "regency", "alamo"]);
+    const CHAINS_WITH_NATIVE_DISCOVERY = new Set(["regal", "amc", "cinemark", "cinemawest", "harkins", "regency", "alamo", "marcus"]);
     function chainsMatchingTheater(theaterName) {
       const chains = [];
       // Regal, AMC, Harkins, and Cinemark are discovered separately via their own APIs -- not in theatersInRange
@@ -914,7 +928,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       return !chains.every((c) => CHAINS_WITH_NATIVE_DISCOVERY.has(c));
     });
 
-    if (theatersInRangeAll.length > 0 && knownChainTheaterNames.size === 0 && regalDirectTheaters.length === 0 && amcDirectTheaters.length === 0 && harkinsDirectTheaters.length === 0 && cinemarkDirectTheaters.length === 0 && alamoDirectTheaters.length === 0) {
+    if (theatersInRangeAll.length > 0 && knownChainTheaterNames.size === 0 && regalDirectTheaters.length === 0 && amcDirectTheaters.length === 0 && harkinsDirectTheaters.length === 0 && cinemarkDirectTheaters.length === 0 && alamoDirectTheaters.length === 0 && marcusDirectTheaters.length === 0) {
       return res.json({
         movie,
         theatersFound: nearbyTheaters.length,
@@ -1926,6 +1940,62 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         );
       } catch (err) {
         console.error(`Alamo showtime discovery failed:`, err.message);
+      }
+    }
+
+    // ---- Phase 10: Marcus Theatres -- api-injin.marcustheatres.com CMS + order API pricing ----
+    // Booking fee: $2.59 (confirmed live 2026-08-25, Gurnee Mills IL).
+    // Requires MARCUS_TOKEN env var (Bearer JWT, role CINEMAAPP).
+    if (marcusDirectTheaters.length > 0) {
+      if (!process.env.MARCUS_TOKEN) {
+        console.error(`Marcus: skipping ${marcusDirectTheaters.length} cinema(s) — MARCUS_TOKEN not set`);
+      } else {
+        try {
+          const marcusEntries = await getMarcusShowtimesForCinemas({
+            cinemas: marcusDirectTheaters,
+            movieTitle: movie,
+            dateISO: searchDateISO,
+          });
+          await Promise.all(
+            marcusEntries.map((entry) =>
+              priceLimit(async () => {
+                const wouldBeInWindow = buildResultIfWithinWindow({
+                  theaterName: entry.cinema.name,
+                  distanceMin: entry.cinema.distanceMin,
+                  startTimeRaw: entry.startTimeRaw,
+                  format: entry.format,
+                  chain: "marcus",
+                });
+                if (!wouldBeInWindow) return;
+                let price = null, priceSource = null, priceExtras = {};
+                try {
+                  const pricing = await getMarcusSessionPrice(entry.showtimeUUID);
+                  const basePrice = pricing.priceInCents / 100;
+                  const fee = pricing.bookingFeeInCents / 100;
+                  price = Math.round((basePrice + fee) * 100) / 100;
+                  priceSource = "marcus-direct";
+                  priceExtras = { priceBeforeFee: basePrice, estimatedFee: fee, feeStatus: "confirmed" };
+                } catch (err) {
+                  console.error(`Marcus pricing failed for ${entry.cinema.name}:`, err.message);
+                }
+                const built = buildResultIfWithinWindow({
+                  theaterName: entry.cinema.name,
+                  distanceMin: entry.cinema.distanceMin,
+                  startTimeRaw: entry.startTimeRaw,
+                  format: entry.format,
+                  price,
+                  priceSource,
+                  priceExtras,
+                  bookingLink: entry.bookingLink,
+                  chain: "marcus",
+                });
+                if (built) results.push(built);
+              })
+            )
+          );
+        } catch (err) {
+          console.error(`Marcus showtime discovery failed:`, err.message);
+        }
       }
     }
 
