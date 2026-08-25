@@ -209,6 +209,23 @@
   }
   .banner.warn { background: rgba(201, 138, 61, 0.12); border: 1px solid var(--warn); color: var(--warn); }
   .banner.error { background: rgba(201, 106, 90, 0.12); border: 1px solid var(--error); color: var(--error); }
+  .overflow-banner {
+    font-size: 13px;
+    color: var(--ink-dim);
+    margin-top: 10px;
+    padding: 8px 12px;
+    border: 1px solid var(--stub-line);
+    border-radius: 8px;
+  }
+  .overflow-reveal-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--accent);
+    font-size: 13px;
+    cursor: pointer;
+    text-decoration: underline;
+  }
 
   .empty {
     border: 1px dashed var(--stub-line);
@@ -904,6 +921,7 @@
             return priceA - priceB;
           });
           merged.matchingShowings = (merged.matchingShowings ?? merged.results.length) + regalData.results.length;
+          merged.regalOverflow = regalData.overflow || [];
           renderResults(merged, lastRenderOpts);
         });
       }
@@ -1341,10 +1359,39 @@
       if (cheapestResult == null || r.price < cheapestResult.price) cheapestResult = r;
     }
 
+    const overflow = data.regalOverflow || [];
+    const overflowByTheater = {};
+    for (const r of overflow) {
+      (overflowByTheater[r.theaterName] = overflowByTheater[r.theaterName] || []).push(r);
+    }
+    const overflowHtml = overflow.length
+      ? Object.entries(overflowByTheater).map(([theater, showings]) =>
+          `<div class="overflow-banner">
+            ${escapeHtml(theater)}: ${showings.length} more showing${showings.length === 1 ? '' : 's'} not priced (credit limit reached) &mdash;
+            <button class="overflow-reveal-btn" onclick="window.showRegalOverflow(this, ${escapeHtml(JSON.stringify(showings)).replace(/"/g, '&quot;')})">Show them</button>
+          </div>`
+        ).join('')
+      : '';
+
     els.results.innerHTML = filterChipsHtml + chainChipsHtml + sortToggleHtml + `<div class="list">${displayResults.map((r) =>
       buildCardHtml(r, r === cheapestResult, opts)
-    ).join('')}</div>`;
+    ).join('')}</div>` + overflowHtml;
   }
+
+  window.showRegalOverflow = function(btn, showings) {
+    // Move revealed showings into the main result set so sort/filter
+    // re-renders don't lose them or re-show the button.
+    if (lastRenderData) {
+      lastRenderData = {
+        ...lastRenderData,
+        results: [...(lastRenderData.results || []), ...showings],
+        regalOverflow: (lastRenderData.regalOverflow || []).filter(
+          (r) => !showings.some((s) => s.theaterName === r.theaterName && s.startTime === r.startTime)
+        ),
+      };
+    }
+    renderResults(lastRenderData, lastRenderOpts);
+  };
 
   // startTime from the API is already a 12-hour string like "7:00pm" in
   // most cases (SerpApi's format) -- pass through as-is, just tidy casing.

@@ -2293,6 +2293,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     }
 
     const results = [];
+    const overflowResults = [];
     let regalScrapeDoCallsUsed = 0;
     const regalCreditsByProvider = {};
 
@@ -2327,12 +2328,23 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               `(pricing only these). Movies seen: ${[...new Set(allPerformances.map((p) => p.movieName))].join(", ") || "(none)"}. ` +
               `Real times seen for "${movie}": ${movieMatches.map((p) => p.showTime.slice(0, 5)).join(", ") || "(none)"}`
             );
-            const MAX_PERFORMANCES_PER_THEATER = 2;
+            const MAX_PERFORMANCES_PER_THEATER = 5;
             const toPrice = inWindow.slice(0, MAX_PERFORMANCES_PER_THEATER);
             if (inWindow.length > MAX_PERFORMANCES_PER_THEATER) {
               console.error(
                 `Regal: capping ${theaterName} at ${MAX_PERFORMANCES_PER_THEATER} priced showings (had ${inWindow.length} within the search window) to protect real credits.`
               );
+            }
+            // Build unpriced result objects for any showings beyond the cap so
+            // the frontend can offer a "show N more" option without re-searching.
+            const overflowPerfs = inWindow.slice(MAX_PERFORMANCES_PER_THEATER);
+            for (const p of overflowPerfs) {
+              const built = regalResultIfWithinWindow({
+                theaterName,
+                distanceMin: theater.distanceMin,
+                startTimeRaw: p.showTime.slice(0, 5),
+              });
+              if (built) overflowResults.push(built);
             }
 
             const priced = await getRegalPricedShowtimes({
@@ -2376,7 +2388,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       )
     );
 
-    res.json({ results, regalScrapeDoCreditsUsed: regalScrapeDoCallsUsed, regalCreditsByProvider });
+    res.json({ results, overflow: overflowResults, regalScrapeDoCreditsUsed: regalScrapeDoCallsUsed, regalCreditsByProvider });
   } catch (err) {
     console.error("Regal search failed:", err);
     res.status(500).json({ error: "Regal search failed", detail: err.message });
