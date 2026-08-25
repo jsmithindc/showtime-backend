@@ -40,7 +40,7 @@ const { getHarkinsTheaters } = require("./lib/harkins-theaters");
 const { getShowtimesForMovie: getHarkinsShowtimesForMovie, getTicketPricing: getHarkinsTicketPricing, getRuntimeForMovie: getHarkinsRuntimeForMovie } = require("./lib/priceAdapters/harkins-official");
 const REGENCY_THEATER_MAP = require("./lib/regency-theater-map");
 const { getShowtimesForLocation: getRegencyShowtimesForLocation, getTicketPricing: getRegencyTicketPricing, getFilmIdMap: getRegencyFilmIdMap } = require("./lib/priceAdapters/regency-official");
-const { getAlamoCinemasInRange, getAlamoShowtimesForCinemas } = require("./lib/priceAdapters/alamo-official");
+const { getAlamoCinemasInRange, getAlamoShowtimesForCinemas, getAlamoSessionPrice } = require("./lib/priceAdapters/alamo-official");
 const { matchesMovie } = require("./lib/priceAdapters/serpapi");
 const CINEMARK_THEATER_SLUGS = require("./lib/cinemark-theater-slugs");
 const { getRuntimeForMovieAtTheater, getCinemarkMovieIdForTitle } = require("./lib/cinemark-runtime-scraper");
@@ -1864,7 +1864,10 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       )
     );
 
-    // ---- Phase 9: Alamo Drafthouse -- public v2 API, showtimes only (no pricing) ----
+    // ---- Phase 9: Alamo Drafthouse -- public v2 schedule API + seats-endpoint pricing ----
+    // Pricing: GET /s/mother/v1/app/seats/{cinemaId}/{sessionId}
+    // Returns areas[].ticketClassInfos[].defaultPriceInCents -- flat per-seat price, no auth needed.
+    // CONFIRMED REAL 2026-08-25: Austin $7.58, DTLA $9.00.
     if (alamoDirectTheaters.length > 0) {
       try {
         const alamoEntries = await getAlamoShowtimesForCinemas({
@@ -1878,19 +1881,43 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           `across ${alamoDirectTheaters.length} cinema(s).`
         );
 
-        for (const entry of alamoEntries) {
-          const built = buildResultIfWithinWindow({
-            theaterName: entry.cinema.name,
-            distanceMin: entry.cinema.distanceMin,
-            startTimeRaw: entry.startTimeRaw,
-            format: entry.format,
-            price: null,
-            priceSource: null,
-            bookingLink: entry.bookingLink,
-            chain: "alamo",
-          });
-          if (built) results.push(built);
-        }
+        await Promise.all(
+          alamoEntries.map((entry) =>
+            priceLimit(async () => {
+              // Pre-check the time window before making a pricing call
+              const wouldBeInWindow = buildResultIfWithinWindow({
+                theaterName: entry.cinema.name,
+                distanceMin: entry.cinema.distanceMin,
+                startTimeRaw: entry.startTimeRaw,
+                format: entry.format,
+                chain: "alamo",
+              });
+              if (!wouldBeInWindow) return;
+
+              let price = null;
+              let priceSource = null;
+              try {
+                const pricing = await getAlamoSessionPrice(entry.cinema.cinemaId, entry.sessionId);
+                price = pricing.priceInCents / 100;
+                priceSource = "alamo-direct";
+              } catch (err) {
+                console.error(`Alamo pricing failed for ${entry.cinema.name} session ${entry.sessionId}:`, err.message);
+              }
+
+              const built = buildResultIfWithinWindow({
+                theaterName: entry.cinema.name,
+                distanceMin: entry.cinema.distanceMin,
+                startTimeRaw: entry.startTimeRaw,
+                format: entry.format,
+                price,
+                priceSource,
+                bookingLink: entry.bookingLink,
+                chain: "alamo",
+              });
+              if (built) results.push(built);
+            })
+          )
+        );
       } catch (err) {
         console.error(`Alamo showtime discovery failed:`, err.message);
       }
