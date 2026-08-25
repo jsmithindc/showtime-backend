@@ -7,6 +7,10 @@ const { resolveCanonicalLocation } = require("./lib/serpapi-location");
 const { getPricedShowtimes: getRegalPricedShowtimes, getShowtimesForTheater: getRegalShowtimesForTheater } = require("./lib/priceAdapters/regal-scrapedo");
 const REGAL_CINEMA_MAP = require("./lib/regal-cinema-map");
 const { getRegalTheaters } = require("./lib/regal-theaters");
+const REGAL_CA_THEATERS = require("./lib/regal-theaters-ca");
+// code → nice display name from the static CA list, which has cleaner names
+// than Regal's live API (e.g. "Regal Natomas Marketplace" vs "Natomas MktPlace Stm 16 & RPX").
+const REGAL_CA_NAME_BY_CODE = Object.fromEntries(REGAL_CA_THEATERS.map((t) => [t.id, t.name]));
 // Some map entries are objects { code, lat, lng } instead of plain strings,
 // used when the theater's OSM coordinates are known to be wrong. These two
 // helpers normalize access so the rest of the code doesn't have to care.
@@ -675,7 +679,10 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
             .then((allRegal) => {
               for (const t of allRegal) {
                 const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
-                if (dMin <= discoveryRadiusMin) regalDirectTheaters.push({ ...t, distanceMin: dMin });
+                if (dMin <= discoveryRadiusMin) {
+                  const niceName = REGAL_CA_NAME_BY_CODE[t.code] || t.name;
+                  regalDirectTheaters.push({ ...t, name: niceName, distanceMin: dMin });
+                }
               }
               console.error(
                 `Regal direct: ${regalDirectTheaters.length} theaters within ${radiusMin}min` +
@@ -2232,7 +2239,8 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       for (const t of allRegal) {
         const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
         if (dMin <= Number(radiusMin)) {
-          regalDirectTheaters.push({ ...t, distanceMin: dMin });
+          const niceName = REGAL_CA_NAME_BY_CODE[t.code] || t.name;
+          regalDirectTheaters.push({ ...t, name: niceName, distanceMin: dMin });
         }
       }
       console.error(

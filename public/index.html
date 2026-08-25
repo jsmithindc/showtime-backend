@@ -909,9 +909,11 @@
             return;
           }
 
-          if (!regalData || !regalData.results || regalData.results.length === 0) return;
+          const regalResults = (regalData && regalData.results) || [];
+          const regalOverflow = (regalData && regalData.overflow) || [];
+          if (regalResults.length === 0 && regalOverflow.length === 0) return;
 
-          const merged = { ...lastRenderData, results: [...(lastRenderData.results || []), ...regalData.results] };
+          const merged = { ...lastRenderData, results: [...(lastRenderData.results || []), ...regalResults] };
           merged.results.sort((a, b) => {
             const priceA = effectivePriceForSorting(a);
             const priceB = effectivePriceForSorting(b);
@@ -920,8 +922,8 @@
             if (priceB == null) return -1;
             return priceA - priceB;
           });
-          merged.matchingShowings = (merged.matchingShowings ?? merged.results.length) + regalData.results.length;
-          merged.regalOverflow = regalData.overflow || [];
+          merged.matchingShowings = (merged.matchingShowings ?? merged.results.length) + regalResults.length;
+          merged.regalOverflow = regalOverflow;
           renderResults(merged, lastRenderOpts);
         });
       }
