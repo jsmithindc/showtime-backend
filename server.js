@@ -813,7 +813,8 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
             // Strip Cinemark's SEO prefix ("Movie Theater In X, Y | Cinemark Z" -> "Cinemark Z")
             // and decode HTML entities (&amp; -> &) baked into the theater list.
             const rawName = t.name.includes(" | ") ? t.name.split(" | ").pop() : t.name;
-            const cleanName = rawName.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+            let cleanName = rawName.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+            if (!/^cinemark\b/i.test(cleanName)) cleanName = "Cinemark " + cleanName;
             cinemarkDirectTheaters.push({ ...t, name: cleanName, distanceMin: dMin });
           }
         }
