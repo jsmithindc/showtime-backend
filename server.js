@@ -2272,24 +2272,21 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
 
     const realRuntimeMin = await getRuntimeMinutes(movie, RUNTIME_MIN, getHarkinsRuntimeForMovie);
 
-    // Self-contained window check -- a Regal-specific equivalent of
-    // buildResultIfWithinWindow (which is local to the main handler and
-    // not reachable from here). Regal always reports format "Standard",
-    // so this is simpler than the general version.
-    function regalResultIfWithinWindow({ theaterName, distanceMin, startTimeRaw, price, bookingLink, priceExtras }) {
+    function regalResultIfWithinWindow({ theaterName, distanceMin, startTimeRaw, format, price, bookingLink, priceExtras, performanceId, cinemaCode: perfCinemaCode }) {
+      const fmt = format || "Standard";
       const startMin = parseGoogleTime(startTimeRaw);
       if (startMin === null) return null;
       const { high: trailerHigh, low: trailerLow } = getTrailerBufferRange(theaterName);
       const endMin = startMin + realRuntimeMin + trailerHigh;
       if (startMin < nowMinutes) return null;
       if (endMin > deadlineMinutes) return null;
-      if (!matchesWantedFormat("Standard", wantedFormats)) return null;
+      if (!matchesWantedFormat(fmt, wantedFormats)) return null;
 
       return {
         theaterName,
         distanceMin,
         chain: "regal",
-        format: "Standard",
+        format: fmt,
         startTime: startTimeRaw,
         estimatedEndTime: formatEndTimeRangeStandalone(startTimeRaw, realRuntimeMin, trailerLow, trailerHigh),
         filmActuallyStartsAt: formatEndTimeRangeStandalone(startTimeRaw, 0, trailerLow, trailerHigh),
@@ -2297,6 +2294,9 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
         price: price ?? null,
         bookingLink: bookingLink ?? null,
         priceSource: "regal-direct",
+        // Included so the frontend can call /api/price-regal-showing to
+        // fetch pricing on demand (used for the overflow "Show them" path).
+        ...(performanceId ? { performanceId, cinemaCode: perfCinemaCode } : {}),
         ...(priceExtras || {}),
       };
     }
@@ -2352,6 +2352,9 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
                 theaterName,
                 distanceMin: theater.distanceMin,
                 startTimeRaw: p.showTime.slice(0, 5),
+                format: p.format,
+                performanceId: p.performanceId,
+                cinemaCode,
               });
               if (built) overflowResults.push(built);
             }
@@ -2370,7 +2373,8 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
 
             for (const p of priced.results) {
               if (p.price == null) continue;
-              const estimatedFee = estimateRegalFee("Standard");
+              const fmt = p.format || "Standard";
+              const estimatedFee = estimateRegalFee(fmt);
               const [y, m, d] = searchDateISO.split("-");
               const regalDateFormatted = `${m}-${d}-${y}`;
               const regalBookingLink = p.movieId
@@ -2380,6 +2384,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
                 theaterName,
                 distanceMin: theater.distanceMin,
                 startTimeRaw: p.time.slice(0, 5),
+                format: fmt,
                 price: Math.round((p.price + estimatedFee) * 100) / 100,
                 bookingLink: regalBookingLink,
                 priceExtras: {
@@ -2401,6 +2406,58 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
   } catch (err) {
     console.error("Regal search failed:", err);
     res.status(500).json({ error: "Regal search failed", detail: err.message });
+  }
+});
+
+// On-demand pricing for a single Regal performance -- used by the
+// frontend's overflow "Show them" path to fetch a real ticket price
+// for showings that were beyond the per-theater cap during the main search.
+app.get("/api/price-regal-showing", searchRateLimiter, async (req, res) => {
+  const { cinemaCode, performanceId, movie, dateISO, theaterName, distanceMin, startTime, format } = req.query;
+  if (!cinemaCode || !performanceId || !movie || !dateISO) {
+    return res.status(400).json({ error: "cinemaCode, performanceId, movie, and dateISO are required" });
+  }
+  try {
+    const costTracker = { total: 0, byProvider: {} };
+    const priced = await getRegalPricedShowtimes({
+      cinemaCode,
+      movieTitle: movie,
+      dateISO,
+      preDiscoveredPerformances: [{
+        performanceId,
+        showTime: startTime ? startTime + ":00" : null,
+        movieId: null,
+        movieName: movie,
+        screenType: null,
+        screenName: null,
+        attrNames: [],
+        format: format || "Standard",
+      }],
+      costTracker,
+    });
+    const p = priced.results[0];
+    if (!p || p.price == null) {
+      return res.json({ price: null, creditsUsed: costTracker.total });
+    }
+    const fmt = p.format || format || "Standard";
+    const estimatedFee = estimateRegalFee(fmt);
+    const [y, m, d] = dateISO.split("-");
+    const regalDateFormatted = `${m}-${d}-${y}`;
+    const bookingLink = p.movieId
+      ? `https://www.regmovies.com/movies/${toUrlSlug(movie)}-${p.movieId.toLowerCase()}?date=${regalDateFormatted}&site=${cinemaCode}&id=${performanceId}`
+      : null;
+    res.json({
+      price: Math.round((p.price + estimatedFee) * 100) / 100,
+      priceBeforeFee: p.price,
+      estimatedFee,
+      feeStatus: "estimated",
+      format: fmt,
+      bookingLink,
+      creditsUsed: costTracker.total,
+    });
+  } catch (err) {
+    console.error("price-regal-showing failed:", err.message);
+    res.status(500).json({ error: "Pricing failed", detail: err.message });
   }
 });
 

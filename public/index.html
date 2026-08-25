@@ -1369,8 +1369,8 @@
     const overflowHtml = overflow.length
       ? Object.entries(overflowByTheater).map(([theater, showings]) =>
           `<div class="overflow-banner">
-            ${escapeHtml(theater)}: ${showings.length} more showing${showings.length === 1 ? '' : 's'} not priced (credit limit reached) &mdash;
-            <button class="overflow-reveal-btn" onclick="window.showRegalOverflow(this, ${escapeHtml(JSON.stringify(showings)).replace(/"/g, '&quot;')})">Show them</button>
+            ${escapeHtml(theater)}: ${showings.length} more showing${showings.length === 1 ? '' : 's'} within your window &mdash;
+            <button class="overflow-reveal-btn" onclick="window.showRegalOverflow(this, ${escapeHtml(JSON.stringify(showings)).replace(/"/g, '&quot;')})">Fetch prices &amp; show</button>
           </div>`
         ).join('')
       : '';
@@ -1380,13 +1380,38 @@
     ).join('')}</div>` + overflowHtml;
   }
 
-  window.showRegalOverflow = function(btn, showings) {
-    // Move revealed showings into the main result set so sort/filter
-    // re-renders don't lose them or re-show the button.
+  window.showRegalOverflow = async function(btn, showings) {
+    btn.disabled = true;
+    btn.textContent = 'Fetching prices...';
+
+    const movie = lastRenderData && lastRenderData.movie;
+    const dateISO = lastRenderData && lastRenderData.searchDate;
+
+    const priced = await Promise.all(showings.map(async (r) => {
+      if (!r.performanceId || !r.cinemaCode || !movie || !dateISO) return r;
+      try {
+        const params = new URLSearchParams({
+          cinemaCode: r.cinemaCode,
+          performanceId: r.performanceId,
+          movie,
+          dateISO,
+          theaterName: r.theaterName,
+          startTime: r.startTime,
+          format: r.format || 'Standard',
+        });
+        const data = await fetch(`/api/price-regal-showing?${params}`).then((res) => res.json());
+        if (data.price != null) {
+          return { ...r, price: data.price, priceBeforeFee: data.priceBeforeFee, estimatedFee: data.estimatedFee,
+            feeStatus: data.feeStatus, bookingLink: data.bookingLink || r.bookingLink, format: data.format || r.format };
+        }
+      } catch (_) {}
+      return r;
+    }));
+
     if (lastRenderData) {
       lastRenderData = {
         ...lastRenderData,
-        results: [...(lastRenderData.results || []), ...showings],
+        results: [...(lastRenderData.results || []), ...priced],
         regalOverflow: (lastRenderData.regalOverflow || []).filter(
           (r) => !showings.some((s) => s.theaterName === r.theaterName && s.startTime === r.startTime)
         ),
