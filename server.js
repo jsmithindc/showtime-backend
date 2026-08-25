@@ -42,7 +42,7 @@ const REGENCY_THEATER_MAP = require("./lib/regency-theater-map");
 const { getShowtimesForLocation: getRegencyShowtimesForLocation, getTicketPricing: getRegencyTicketPricing, getFilmIdMap: getRegencyFilmIdMap } = require("./lib/priceAdapters/regency-official");
 const { getAlamoCinemasInRange, getAlamoShowtimesForCinemas, getAlamoSessionPrice } = require("./lib/priceAdapters/alamo-official");
 const { getMarcusCinemasInRange, getMarcusShowtimesForCinemas, getMarcusSessionPrice } = require("./lib/priceAdapters/marcus-official");
-const { getLandmarkTheatersInRange, getLandmarkShowtimesForTheaters } = require("./lib/priceAdapters/landmark-official");
+const { getLandmarkTheatersInRange, getLandmarkShowtimesForTheaters, getLandmarkPricing } = require("./lib/priceAdapters/landmark-official");
 const { matchesMovie } = require("./lib/priceAdapters/serpapi");
 const CINEMARK_THEATER_SLUGS = require("./lib/cinemark-theater-slugs");
 const { getRuntimeForMovieAtTheater, getCinemarkMovieIdForTitle } = require("./lib/cinemark-runtime-scraper");
@@ -2013,9 +2013,11 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       }
     }
 
-    // ---- Phase 11: Landmark Theatres -- gatsby-source-boxofficeapi schedule + pre-generated booking URLs ----
-    // No pricing (booking.landmarktheatres.com is Cloudflare-protected).
-    // Booking URLs are embedded directly in the schedule response; no extra call needed.
+    // ---- Phase 11: Landmark Theatres -- gatsby-source-boxofficeapi schedule + booking API pricing ----
+    // Booking URLs are pre-generated per-showtime in the schedule response.
+    // Pricing: GET booking.landmarktheatres.com/api/launch/ticketing/{uuid} (Cloudflare-protected,
+    // through proxy chain). One call per theater (cheapest-first ticket array). Returns all standard
+    // ticket types; guest calls get Adult/Child/Senior etc., not loyalty-member-only prices.
     if (landmarkDirectTheaters.length > 0) {
       try {
         const landmarkEntries = await getLandmarkShowtimesForTheaters({
@@ -2023,22 +2025,51 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           movieTitle: movie,
           dateISO: searchDateISO,
         });
+
+        // One pricing call per theater (use first valid showtime's UUID; prices are per-theater, not per-session).
+        const pricingByCode = new Map();
+        await Promise.all(
+          landmarkDirectTheaters.map(async (theater) => {
+            const firstEntry = landmarkEntries.find((e) => e.cinema.code === theater.code && e.bookingLink);
+            if (!firstEntry) return;
+            const uuid = firstEntry.bookingLink.split("/").pop();
+            if (!uuid) return;
+            try {
+              const tickets = await getLandmarkPricing(uuid);
+              if (tickets && tickets.length > 0) pricingByCode.set(theater.code, tickets);
+            } catch (err) {
+              console.error(`Landmark pricing failed for ${theater.code}:`, err.message);
+            }
+          })
+        );
+
         for (const entry of landmarkEntries) {
+          const tickets = pricingByCode.get(entry.cinema.code);
+          const cheapest = tickets?.[0] ?? null;
           const built = buildResultIfWithinWindow({
             theaterName: entry.cinema.name,
             distanceMin: entry.cinema.distanceMin,
             startTimeRaw: entry.startTimeRaw,
             format: entry.format,
-            price: null,
-            priceSource: null,
+            price: cheapest ? cheapest.totalDollars : null,
+            priceSource: cheapest ? "landmark-official" : null,
             bookingLink: entry.bookingLink,
             chain: "landmark",
           });
-          if (built) results.push(built);
+          if (built) {
+            // Alternate ticket types (Child, Senior, etc.) shown like AMC Stubs secondary prices.
+            if (tickets && tickets.length > 1) {
+              built.landmarkAlternatePrices = tickets.slice(1).map((t) => ({
+                label: t.displayName,
+                total: t.totalDollars,
+              }));
+            }
+            results.push(built);
+          }
         }
         console.error(
           `Landmark: fetched ${landmarkEntries.length} session(s) matching "${movie}" on ${searchDateISO} ` +
-          `across ${landmarkDirectTheaters.length} theater(s).`
+          `across ${landmarkDirectTheaters.length} theater(s); pricing resolved for ${pricingByCode.size} theater(s).`
         );
       } catch (err) {
         console.error(`Landmark showtime discovery failed:`, err.message);

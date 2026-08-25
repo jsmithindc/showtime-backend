@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.9.1</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">4.9.2</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1202,6 +1202,13 @@
                <div class="stubs-row"><span class="stubs-amt stubs-amt-solo">$${r.regencyTuesdayPrice.toFixed(2)}</span></div>
 
              </div>`
+          : '') +
+        (r.landmarkAlternatePrices?.length
+          ? `<div class="stubs-stub">
+               ${r.landmarkAlternatePrices.map((t) =>
+                 `<div class="stubs-row"><span class="stubs-venue">${escapeHtml(t.label)}</span><span class="stubs-amt">$${t.total.toFixed(2)}</span></div>`
+               ).join('')}
+             </div>`
           : '')
       : `<span class="price unknown">Check<br/>theater</span>`;
     return `
@@ -1488,7 +1495,7 @@
     // this needed a visually distinct control rather than matching the
     // format/chain filter chips.
     const hasAnyFeeBreakdown = allResults.some((r) => r.priceBeforeFee != null && (r.fee ?? r.estimatedFee) != null);
-    const hasAnyDiscountPrice = allResults.some((r) => r.amcStubsDiscountPriceOnlineHigh != null || r.regencyTuesdayPrice != null);
+    const hasAnyDiscountPrice = allResults.some((r) => r.amcStubsDiscountPriceOnlineHigh != null || r.regencyTuesdayPrice != null || r.landmarkAlternatePrices?.length);
     const sortToggleHtml = `<div style="margin-bottom:12px; display:flex; flex-wrap:wrap; align-items:center; gap:12px;">
       <div style="display:flex; align-items:center; gap:8px;">
         <span style="font-size:11px; color:var(--ink-dim);">Sort:</span>
