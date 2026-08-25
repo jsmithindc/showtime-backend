@@ -2339,6 +2339,10 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
             );
             const MAX_PERFORMANCES_PER_THEATER = 5;
             const toPrice = inWindow.slice(0, MAX_PERFORMANCES_PER_THEATER);
+            console.error(
+              `Regal [${cinemaCode}]: pricing these ${toPrice.length}: ${toPrice.map((p) => `${p.showTime.slice(0, 5)}/${p.format}`).join(", ")}` +
+              (inWindow.length > MAX_PERFORMANCES_PER_THEATER ? ` | overflow: ${inWindow.slice(MAX_PERFORMANCES_PER_THEATER).map((p) => `${p.showTime.slice(0, 5)}/${p.format}`).join(", ")}` : "")
+            );
             if (inWindow.length > MAX_PERFORMANCES_PER_THEATER) {
               console.error(
                 `Regal: capping ${theaterName} at ${MAX_PERFORMANCES_PER_THEATER} priced showings (had ${inWindow.length} within the search window) to protect real credits.`
@@ -2372,6 +2376,10 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               regalCreditsByProvider[providerName] = (regalCreditsByProvider[providerName] || 0) + credits;
             }
 
+            const nullPriced = priced.results.filter((p) => p.price == null);
+            if (nullPriced.length > 0) {
+              console.error(`Regal [${cinemaCode}]: ${nullPriced.length} showing(s) returned null price (dropped from results): ${nullPriced.map((p) => `${(p.time || "?").slice(0, 5)}/${p.format}`).join(", ")}`);
+            }
             for (const p of priced.results) {
               if (p.price == null) continue;
               const fmt = p.format || "Standard";
