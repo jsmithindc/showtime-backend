@@ -2699,6 +2699,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               try {
                 const { found, showtimes: atomShowtimes } = await getAtomShowtimes({
                   theaterName,
+                  regalCode: cinemaCode,
                   dateISO: searchDateISO,
                   movieTitle: movie,
                 });
