@@ -3093,4 +3093,47 @@ console.log(
       `Check SCRAPEDO_TOKEN, ZENROWS_API_KEY, APIFY_API_TOKEN, FIRECRAWL_API_KEY in start.sh.`
 );
 
+// TEMPORARY debug endpoint: fetch a Regal showtime page via byparr and
+// return __NEXT_DATA__ so we can check if pricing is embedded in the HTML.
+// Remove once investigation is complete.
+app.get("/api/debug-regal-page", async (req, res) => {
+  const { url } = req.query;
+  if (!url || !url.startsWith("https://www.regmovies.com/")) {
+    return res.status(400).json({ error: "Pass ?url=https://www.regmovies.com/..." });
+  }
+  const byparrUrl = process.env.BYPARR_URL;
+  const byparrSecret = process.env.BYPARR_SECRET;
+  if (!byparrUrl || !byparrSecret) {
+    return res.status(503).json({ error: "BYPARR_URL / BYPARR_SECRET not configured" });
+  }
+  try {
+    const fetch = require("node-fetch");
+    const byparrRes = await fetch(`${byparrUrl}/v1`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Byparr-Token": byparrSecret },
+      body: JSON.stringify({ cmd: "request.get", url, session: "regal-debug" }),
+    });
+    const envelope = await byparrRes.json();
+    if (envelope.status !== "ok") {
+      return res.status(502).json({ error: "byparr error", envelope });
+    }
+    const html = envelope.solution?.response ?? "";
+    const httpStatus = envelope.solution?.status;
+    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (!nextDataMatch) {
+      return res.json({
+        httpStatus,
+        htmlLength: html.length,
+        hasNextData: false,
+        first2000: html.slice(0, 2000),
+      });
+    }
+    const nextData = JSON.parse(nextDataMatch[1]);
+    // Redact nothing -- this is pricing data from a public ticketing page.
+    return res.json({ httpStatus, htmlLength: html.length, hasNextData: true, nextData });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => console.log(`Showtime Finder API on :${PORT}`));
