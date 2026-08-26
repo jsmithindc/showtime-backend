@@ -5,6 +5,7 @@ const { estimatedMinutesAway, minutesToMeters } = require("./lib/distance");
 const { getPricedShowtimes, getTheaterSchedule } = require("./lib/priceAdapters/serpapi");
 const { resolveCanonicalLocation } = require("./lib/serpapi-location");
 const { getPricedShowtimes: getRegalPricedShowtimes, getShowtimesForTheater: getRegalShowtimesForTheater, getCachedShowtimesForTheater: getCachedRegalShowtimes } = require("./lib/priceAdapters/regal-scrapedo");
+const { getAtomShowtimes, getAtomCheckoutPricing } = require("./lib/priceAdapters/atom-tickets");
 const REGAL_CINEMA_MAP = require("./lib/regal-cinema-map");
 const { getRegalTheaters } = require("./lib/regal-theaters");
 const REGAL_CA_THEATERS = require("./lib/regal-theaters-ca");
@@ -2636,7 +2637,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
 
     const realRuntimeMin = await getRuntimeMinutes(movie, RUNTIME_MIN, getHarkinsRuntimeForMovie);
 
-    function regalResultIfWithinWindow({ theaterName, distanceMin, startTimeRaw, format, price, bookingLink, priceExtras, performanceId, movieId: perfMovieId, cinemaCode: perfCinemaCode }) {
+    function regalResultIfWithinWindow({ theaterName, distanceMin, startTimeRaw, format, price, bookingLink, priceExtras, performanceId, movieId: perfMovieId, cinemaCode: perfCinemaCode, priceSource: overridePriceSource }) {
       const fmt = format || "Standard";
       const startMin = parseGoogleTime(startTimeRaw);
       if (startMin === null) return null;
@@ -2657,7 +2658,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
         runtimeMinutes: realRuntimeMin,
         price: price ?? null,
         bookingLink: bookingLink ?? null,
-        priceSource: "regal-direct",
+        priceSource: overridePriceSource || "regal-direct",
         // Included so the frontend can call /api/price-regal-showing to
         // fetch pricing on demand (used for the overflow "Show them" path).
         ...(performanceId ? { performanceId, movieId: perfMovieId, cinemaCode: perfCinemaCode } : {}),
@@ -2687,6 +2688,65 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
             const cinemaCode = theater.code;
             try {
               const costTracker = { total: 0, byProvider: {} };
+
+              // --- Atom Tickets path (no proxy, no credits) ---
+              // Try fetching Regal showtimes and pricing directly from Atom
+              // Tickets instead of going through the proxy chain. Atom is a
+              // legitimate Regal reseller; their pages are plain SSR HTML with
+              // no Cloudflare protection. Falls back to the proxy chain below
+              // if the theater isn't listed on Atom or the fetch fails.
+              let usedAtomPath = false;
+              try {
+                const { found, showtimes: atomShowtimes } = await getAtomShowtimes({
+                  theaterName,
+                  dateISO: searchDateISO,
+                  movieTitle: movie,
+                });
+
+                if (found) {
+                  usedAtomPath = true;
+                  const inWindow = atomShowtimes.filter((s) =>
+                    regalResultIfWithinWindow({ theaterName, distanceMin: theater.distanceMin, startTimeRaw: s.time24h })
+                  );
+                  console.error(
+                    `Atom [${theaterName}]: ${atomShowtimes.length} showtime(s) for "${movie}", ` +
+                    `${inWindow.length} within window: ${inWindow.map((s) => `${s.time24h}/${s.format}`).join(", ")}`
+                  );
+
+                  await Promise.all(inWindow.map(async (s) => {
+                    let pricing = null;
+                    try {
+                      pricing = await getAtomCheckoutPricing(s.checkoutId);
+                    } catch (err) {
+                      console.error(`Atom checkout ${s.checkoutId} failed:`, err.message);
+                    }
+
+                    const built = regalResultIfWithinWindow({
+                      theaterName,
+                      distanceMin: theater.distanceMin,
+                      startTimeRaw: s.time24h,
+                      format: s.format,
+                      price: pricing ? pricing.adultCents / 100 : null,
+                      bookingLink: `https://www.atomtickets.com/checkout/${s.checkoutId}`,
+                      priceSource: "atom-tickets",
+                      ...(pricing ? {
+                        priceExtras: {
+                          priceBeforeFee: pricing.baseCents / 100,
+                          estimatedFee: pricing.feeCents / 100,
+                          feeStatus: "exact",
+                        },
+                      } : {}),
+                    });
+                    if (built) sseWrite("result", built);
+                  }));
+                }
+              } catch (atomErr) {
+                console.error(`Atom path failed for ${theaterName}, falling back to Regal proxy:`, atomErr.message);
+                usedAtomPath = false;
+              }
+
+              if (!usedAtomPath) {
+              // --- Regal proxy chain fallback ---
               const allPerformances = await getRegalShowtimesForTheater({
                 cinemaCode,
                 dateISO: searchDateISO,
@@ -2768,6 +2828,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               for (const [providerName, credits] of Object.entries(costTracker.byProvider || {})) {
                 regalCreditsByProvider[providerName] = (regalCreditsByProvider[providerName] || 0) + credits;
               }
+              } // end !usedAtomPath
             } catch (err) {
               console.error(`Regal pricing failed for ${theater.name}:`, err.message);
             }
@@ -3094,46 +3155,4 @@ console.log(
 );
 
 // TEMPORARY debug endpoint: fetch a Regal showtime page via byparr and
-// return __NEXT_DATA__ so we can check if pricing is embedded in the HTML.
-// Remove once investigation is complete.
-app.get("/api/debug-regal-page", async (req, res) => {
-  const { url } = req.query;
-  if (!url || !url.startsWith("https://www.regmovies.com/")) {
-    return res.status(400).json({ error: "Pass ?url=https://www.regmovies.com/..." });
-  }
-  const byparrUrl = process.env.BYPARR_URL;
-  const byparrSecret = process.env.BYPARR_SECRET;
-  if (!byparrUrl || !byparrSecret) {
-    return res.status(503).json({ error: "BYPARR_URL / BYPARR_SECRET not configured" });
-  }
-  try {
-    const fetch = require("node-fetch");
-    const byparrRes = await fetch(`${byparrUrl}/v1`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Byparr-Token": byparrSecret },
-      body: JSON.stringify({ cmd: "request.get", url, session: "regal-debug" }),
-    });
-    const envelope = await byparrRes.json();
-    if (envelope.status !== "ok") {
-      return res.status(502).json({ error: "byparr error", envelope });
-    }
-    const html = envelope.solution?.response ?? "";
-    const httpStatus = envelope.solution?.status;
-    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-    if (!nextDataMatch) {
-      return res.json({
-        httpStatus,
-        htmlLength: html.length,
-        hasNextData: false,
-        first2000: html.slice(0, 2000),
-      });
-    }
-    const nextData = JSON.parse(nextDataMatch[1]);
-    // Redact nothing -- this is pricing data from a public ticketing page.
-    return res.json({ httpStatus, htmlLength: html.length, hasNextData: true, nextData });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
 app.listen(PORT, () => console.log(`Showtime Finder API on :${PORT}`));
