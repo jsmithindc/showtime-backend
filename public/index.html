@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.1.9</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.2.0</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -652,6 +652,23 @@
   }
   loadSaved();
 
+  // Auto-populate movies on page load:
+  // 1. If a place was restored from localStorage, load immediately.
+  // 2. Otherwise, silently request geolocation and load when coords arrive.
+  if (els.place.value && !els.place.value.startsWith('Current location')) {
+    loadMovies({ silent: true });
+  } else if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        els.lat.value = pos.coords.latitude.toFixed(4);
+        els.lng.value = pos.coords.longitude.toFixed(4);
+        els.place.value = `Current location (${els.lat.value}, ${els.lng.value})`;
+        loadMovies({ silent: true });
+      },
+      () => { /* permission denied or unavailable -- wait for user input */ }
+    );
+  }
+
   // Pre-load a location-independent list of what's currently in wide
   // release, so picking a common movie doesn't require waiting on
   // "Not seeing it?" (which needs a location filled in first, and
@@ -835,16 +852,15 @@
 
   els.loadMoviesBtn.addEventListener('click', () => loadMovies());
 
-  // Auto-load movies whenever a location becomes known.
+  // "Use my location" button: after GPS coords land, reload the movie list.
   els.locateBtn.addEventListener('click', () => {
-    // Geolocation sets lat/lng asynchronously; wait for the value to land.
     const poll = setInterval(() => {
       if (els.lat.value && els.lng.value) {
         clearInterval(poll);
         loadMovies({ silent: true });
       }
     }, 200);
-    setTimeout(() => clearInterval(poll), 10000); // give up after 10s
+    setTimeout(() => clearInterval(poll), 10000);
   });
 
   // Auto-load on blur/Enter after typing a zip or city.
