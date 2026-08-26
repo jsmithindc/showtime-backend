@@ -629,15 +629,13 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     }
   }
 
-  if (!location) {
-    return res.status(400).json({
-      error: "location (city/region) is required when lat & lng are provided directly without a place",
-    });
-  }
+  // location is only needed for SerpApi fallback; direct-adapter chains
+  // (AMC, Marcus, etc.) work from lat/lng alone, so don't block here.
 
   const wantedFormats = formats ? formats.split(",").map((f) => f.toLowerCase()) : null;
   const wantedChains = chains ? chains.split(",").map((c) => c.toLowerCase()) : null;
-  const deadlineMinutes = toMinutesSinceMidnight(deadline);
+  const deadlineMinutesRaw = toMinutesSinceMidnight(deadline);
+  const deadlineMinutes = deadlineMinutesRaw < 360 ? deadlineMinutesRaw + 1440 : deadlineMinutesRaw;
   const originLat = Number(lat);
   const originLng = Number(lng);
 
@@ -2282,7 +2280,7 @@ app.get("/api/popular-movies", async (req, res) => {
   }
 });
 
-app.get("/api/movies", searchRateLimiter, async (req, res) => {
+app.get("/api/movies", async (req, res) => {
   const { radiusMin, date } = req.query;
   let { lat, lng, location, place } = req.query;
 
@@ -2309,11 +2307,8 @@ app.get("/api/movies", searchRateLimiter, async (req, res) => {
     }
   }
 
-  if (!location) {
-    return res.status(400).json({
-      error: "location is required when lat & lng are provided directly without a place",
-    });
-  }
+  // location is only needed for SerpApi fallback; direct-adapter chains
+  // work from lat/lng alone, so don't block here.
 
   const searchDateISO = date || todayISOLocal();
   const originLat = Number(lat);
@@ -2564,7 +2559,8 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
   }
 
   const wantedFormats = formats ? formats.split(",").map((f) => f.toLowerCase()) : null;
-  const deadlineMinutes = toMinutesSinceMidnight(deadline);
+  const deadlineMinutesRaw = toMinutesSinceMidnight(deadline);
+  const deadlineMinutes = deadlineMinutesRaw < 360 ? deadlineMinutesRaw + 1440 : deadlineMinutesRaw;
   const originLat = Number(lat);
   const originLng = Number(lng);
   const theaterTimezone = getTimezoneForLocation(originLat, originLng);
