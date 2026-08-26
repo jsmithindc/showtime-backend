@@ -2487,13 +2487,19 @@ app.get("/api/movies", searchRateLimiter, async (req, res) => {
       )
     );
 
-    const movies = [
-      ...new Set([
-        ...marcusMovieTitles,
-        ...amcMovieTitles,
-        ...schedules.flat().map((entry) => entry.movieName).filter(Boolean),
-      ]),
-    ].sort();
+    // Deduplicate case-insensitively; prefer the first-seen casing.
+    const moviesByKey = new Map();
+    for (const title of [
+      ...marcusMovieTitles,
+      ...amcMovieTitles,
+      ...schedules.flat().map((entry) => entry.movieName).filter(Boolean),
+    ]) {
+      const key = title.trim().toLowerCase();
+      if (key && !moviesByKey.has(key)) moviesByKey.set(key, title.trim());
+    }
+    const movies = [...moviesByKey.values()].sort((a, b) =>
+      a.toLowerCase().localeCompare(b.toLowerCase())
+    );
 
     res.json({
       movies,
