@@ -454,6 +454,14 @@ const FORMAT_SYNONYMS = {
   // chip gates these showings (deselecting recliner hides them, as expected).
   "luxury lounger": "recliner",
   "luxury lounger d-box": "recliner",
+  // Marcus large-format screens — premium auditoriums but not a separate
+  // format chip the user would filter on. Map to standard so they're included
+  // when the Standard chip is on (which it is by default).
+  "ultrascreen dlx": "standard",
+  "ultrascreen": "standard",
+  "superscreen dlx": "standard",
+  "bigscreen": "standard",
+  "dremlounger": "standard",
 };
 
 function matchesWantedFormat(realFormat, wantedFormats) {
