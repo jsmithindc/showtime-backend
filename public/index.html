@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.1.8</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.1.9</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -743,18 +743,18 @@
     document.getElementById('chainSectionStatus')
   );
 
-  els.loadMoviesBtn.addEventListener('click', async () => {
+  async function loadMovies({ silent = false } = {}) {
     const lat = els.lat.value.trim();
     const lng = els.lng.value.trim();
     const place = els.place.value.trim();
     const radius = els.radius.value.trim();
 
     if ((!lat || !lng) && !place) {
-      els.statusLine.textContent = 'Fill in a zip code or city first -- movie lookup needs to know where to look.';
+      if (!silent) els.statusLine.textContent = 'Fill in a zip code or city first -- movie lookup needs to know where to look.';
       return;
     }
     if (!radius) {
-      els.statusLine.textContent = 'Fill in a radius first.';
+      if (!silent) els.statusLine.textContent = 'Fill in a radius first.';
       return;
     }
 
@@ -831,7 +831,29 @@
       els.loadMoviesBtn.textContent = 'Not seeing it?';
       els.movieFreeText.style.display = '';
     }
+  }
+
+  els.loadMoviesBtn.addEventListener('click', () => loadMovies());
+
+  // Auto-load movies whenever a location becomes known.
+  els.locateBtn.addEventListener('click', () => {
+    // Geolocation sets lat/lng asynchronously; wait for the value to land.
+    const poll = setInterval(() => {
+      if (els.lat.value && els.lng.value) {
+        clearInterval(poll);
+        loadMovies({ silent: true });
+      }
+    }, 200);
+    setTimeout(() => clearInterval(poll), 10000); // give up after 10s
   });
+
+  // Auto-load on blur/Enter after typing a zip or city.
+  function onPlaceCommit() {
+    if (els.lat.value && els.lng.value) return; // already have coords from GPS
+    loadMovies({ silent: true });
+  }
+  els.place.addEventListener('blur', onPlaceCommit);
+  els.place.addEventListener('keydown', (e) => { if (e.key === 'Enter') onPlaceCommit(); });
 
   function fmtTime24to12(hhmmss) {
     if (!hhmmss) return '';
