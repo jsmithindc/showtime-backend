@@ -2465,6 +2465,33 @@ app.get("/api/movies", async (req, res) => {
       }
     }
 
+    // Regal: fetch the theater listing (already goes through Byparr/proxy,
+    // result is cached so a subsequent /api/search call gets it for free).
+    const regalMovieTitles = new Set();
+    try {
+      const allRegal = await getRegalTheaters();
+      const regalHere = allRegal.filter(
+        (t) => estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin)
+      );
+      if (regalHere.length > 0) {
+        const costTracker = { total: 0, byProvider: {} };
+        const filmLists = await Promise.all(
+          regalHere.map(async (t) => {
+            try {
+              const perfs = await getRegalShowtimesForTheater({ cinemaCode: t.code, dateISO: searchDateISO, costTracker });
+              return perfs.map((p) => p.movieName).filter(Boolean);
+            } catch { return []; }
+          })
+        );
+        filmLists.flat().forEach((title) => regalMovieTitles.add(title));
+        if (regalMovieTitles.size > 0) {
+          console.error(`/api/movies: Regal direct — ${regalMovieTitles.size} title(s) from ${regalHere.length} theater(s)`);
+        }
+      }
+    } catch (err) {
+      console.error("/api/movies: Regal direct fetch failed:", err.message);
+    }
+
     const schedules = await Promise.all(
       theatersInRange.map((theater) =>
         priceLimit(async () => {
@@ -2487,6 +2514,7 @@ app.get("/api/movies", async (req, res) => {
     for (const title of [
       ...marcusMovieTitles,
       ...amcMovieTitles,
+      ...regalMovieTitles,
       ...schedules.flat().map((entry) => entry.movieName).filter(Boolean),
     ]) {
       const key = title.trim().toLowerCase();
