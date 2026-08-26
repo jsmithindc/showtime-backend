@@ -2705,6 +2705,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
                 `Regal [${cinemaCode}]: pricing all ${inWindow.length}: ${inWindow.map((p) => `${p.showTime.slice(0, 5)}/${p.format}`).join(", ")}`
               );
 
+              const pricedPerformanceIds = new Set();
               await getRegalPricedShowtimes({
                 cinemaCode,
                 movieTitle: movie,
@@ -2713,6 +2714,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
                 costTracker,
                 onResult(p) {
                   if (p.price == null) return;
+                  if (p.performanceId) pricedPerformanceIds.add(String(p.performanceId));
                   const fmt = p.format || "Standard";
                   const estimatedFee = estimateRegalFee(fmt);
                   const [y, m, d] = searchDateISO.split("-");
@@ -2736,6 +2738,30 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
                   if (built) sseWrite("result", built);
                 },
               });
+              // Emit unpriced fallbacks for any performances that didn't get
+              // a price (proxy quota exhausted, timeout, etc.) so the showtime
+              // still appears rather than silently disappearing.
+              for (const perf of inWindow) {
+                if (pricedPerformanceIds.has(String(perf.performanceId))) continue;
+                const fmt = perf.format || "Standard";
+                const [y, m, d] = searchDateISO.split("-");
+                const regalDateFormatted = `${m}-${d}-${y}`;
+                const regalBookingLink = perf.movieId
+                  ? `https://www.regmovies.com/movies/${toUrlSlug(movie)}-${perf.movieId.toLowerCase()}?date=${regalDateFormatted}&site=${cinemaCode}&id=${perf.performanceId ?? ""}`
+                  : googleFallbackLink(theaterName, movie);
+                const built = regalResultIfWithinWindow({
+                  theaterName,
+                  distanceMin: theater.distanceMin,
+                  startTimeRaw: perf.showTime.slice(0, 5),
+                  format: fmt,
+                  price: null,
+                  bookingLink: regalBookingLink,
+                  performanceId: perf.performanceId,
+                  movieId: perf.movieId,
+                  cinemaCode,
+                });
+                if (built) sseWrite("result", built);
+              }
 
               regalScrapeDoCallsUsed += costTracker.total;
               for (const [providerName, credits] of Object.entries(costTracker.byProvider || {})) {
