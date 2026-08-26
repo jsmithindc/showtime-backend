@@ -2591,9 +2591,15 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
           regalDirectTheaters.push({ ...t, name: niceName, distanceMin: dMin });
         }
       }
+      const nearbyForDebug = allRegal
+        .map((t) => ({ name: t.name, code: t.code, dMin: estimatedMinutesAway(originLat, originLng, t.lat, t.lng) }))
+        .filter((t) => t.dMin <= Number(radiusMin) * 3)
+        .sort((a, b) => a.dMin - b.dMin)
+        .slice(0, 10);
       console.error(
         `Regal direct (search-regal): ${regalDirectTheaters.length} theaters within ${radiusMin}min` +
-        (regalDirectTheaters.length ? ": " + regalDirectTheaters.map((t) => `${t.name} (${t.code})`).join(", ") : "")
+        (regalDirectTheaters.length ? ": " + regalDirectTheaters.map((t) => `${t.name} (${t.code})`).join(", ") : "") +
+        ` | nearest 10: ${nearbyForDebug.map((t) => `${t.name}=${t.dMin}min`).join(", ")}`
       );
     } catch (err) {
       console.error("Regal direct (search-regal): theater list fetch failed:", err.message);
