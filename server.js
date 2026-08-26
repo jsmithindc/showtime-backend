@@ -449,11 +449,10 @@ function nowMinutesInZone(timestampMs, timezone) {
 // on its own.
 const FORMAT_SYNONYMS = {
   digital: "standard",
-  // Cinemark "Standard Luxury Lounger" → "Luxury Lounger" for display.
-  // Luxury Lounger IS recliner seating, so map to "recliner" so the Recliner
-  // chip gates these showings (deselecting recliner hides them, as expected).
-  "luxury lounger": "recliner",
-  "luxury lounger d-box": "recliner",
+  // Cinemark Luxury Lounger is their standard/base ticket (recliner seating
+  // but cheapest option at the theater), so map to standard not recliner.
+  "luxury lounger": "standard",
+  "luxury lounger d-box": "standard",
   // Marcus large-format premium auditoriums — UltraScreen DLX ($16) and
   // Superscreen DLX ($15) are premium projection formats but have no
   // dedicated filter chip; map to standard so they're included by default.
@@ -461,9 +460,9 @@ const FORMAT_SYNONYMS = {
   "ultrascreen": "standard",
   "superscreen dlx": "standard",
   "bigscreen": "standard",
-  // Marcus DreamLounger is recliner seating (standard projection), same
-  // category as Cinemark's Luxury Lounger.
-  "dreamlounger": "recliner",
+  // Marcus DreamLounger is their standard/base ticket (recliner seating
+  // but cheapest option at the theater), same as Cinemark's Luxury Lounger.
+  "dreamlounger": "standard",
 };
 
 function matchesWantedFormat(realFormat, wantedFormats) {
