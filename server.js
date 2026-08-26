@@ -1260,7 +1260,8 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // links. This is what actually extends Cinemark pricing beyond the
     // single movie that used to be manually mapped -- no more hand-
     // adding an entry to lib/cinemark-movie-map.js per movie.
-    let cinemarkMovieId = CINEMARK_MOVIE_MAP[movie];
+    let cinemarkMovieId = CINEMARK_MOVIE_MAP[movie]
+      || Object.entries(CINEMARK_MOVIE_MAP).find(([k]) => k.toLowerCase() === movie.toLowerCase())?.[1];
     if (!cinemarkMovieId && !cinemarkPricingDisabled) {
       // Use the slug from the first matched Cinemark theater (from nationwide list)
       // to derive the movie ID live from that theater's page.
