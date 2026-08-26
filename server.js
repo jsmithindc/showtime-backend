@@ -1971,57 +1971,53 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 
     // ---- Phase 10: Marcus Theatres -- api-injin.marcustheatres.com CMS + order API pricing ----
     // Booking fee: $2.59 (confirmed live 2026-08-25, Gurnee Mills IL).
-    // Requires MARCUS_TOKEN env var (Bearer JWT, role CINEMAAPP).
+    // Token is auto-fetched from ticketing.marcustheatres.com JS bundle; no env var needed.
     if (marcusDirectTheaters.length > 0) {
-      if (!process.env.MARCUS_TOKEN) {
-        console.error(`Marcus: skipping ${marcusDirectTheaters.length} cinema(s) — MARCUS_TOKEN not set`);
-      } else {
-        try {
-          const marcusEntries = await getMarcusShowtimesForCinemas({
-            cinemas: marcusDirectTheaters,
-            movieTitle: movie,
-            dateISO: searchDateISO,
-          });
-          await Promise.all(
-            marcusEntries.map((entry) =>
-              priceLimit(async () => {
-                const wouldBeInWindow = buildResultIfWithinWindow({
-                  theaterName: entry.cinema.name,
-                  distanceMin: entry.cinema.distanceMin,
-                  startTimeRaw: entry.startTimeRaw,
-                  format: entry.format,
-                  chain: "marcus",
-                });
-                if (!wouldBeInWindow) return;
-                let price = null, priceSource = null, priceExtras = {};
-                try {
-                  const pricing = await getMarcusSessionPrice(entry.showtimeUUID);
-                  const basePrice = pricing.priceInCents / 100;
-                  const fee = pricing.bookingFeeInCents / 100;
-                  price = Math.round((basePrice + fee) * 100) / 100;
-                  priceSource = "marcus-direct";
-                  priceExtras = { priceBeforeFee: basePrice, estimatedFee: fee, feeStatus: "confirmed" };
-                } catch (err) {
-                  console.error(`Marcus pricing failed for ${entry.cinema.name}:`, err.message);
-                }
-                const built = buildResultIfWithinWindow({
-                  theaterName: entry.cinema.name,
-                  distanceMin: entry.cinema.distanceMin,
-                  startTimeRaw: entry.startTimeRaw,
-                  format: entry.format,
-                  price,
-                  priceSource,
-                  priceExtras,
-                  bookingLink: entry.bookingLink,
-                  chain: "marcus",
-                });
-                if (built) results.push(built);
-              })
-            )
-          );
-        } catch (err) {
-          console.error(`Marcus showtime discovery failed:`, err.message);
-        }
+      try {
+        const marcusEntries = await getMarcusShowtimesForCinemas({
+          cinemas: marcusDirectTheaters,
+          movieTitle: movie,
+          dateISO: searchDateISO,
+        });
+        await Promise.all(
+          marcusEntries.map((entry) =>
+            priceLimit(async () => {
+              const wouldBeInWindow = buildResultIfWithinWindow({
+                theaterName: entry.cinema.name,
+                distanceMin: entry.cinema.distanceMin,
+                startTimeRaw: entry.startTimeRaw,
+                format: entry.format,
+                chain: "marcus",
+              });
+              if (!wouldBeInWindow) return;
+              let price = null, priceSource = null, priceExtras = {};
+              try {
+                const pricing = await getMarcusSessionPrice(entry.showtimeUUID);
+                const basePrice = pricing.priceInCents / 100;
+                const fee = pricing.bookingFeeInCents / 100;
+                price = Math.round((basePrice + fee) * 100) / 100;
+                priceSource = "marcus-direct";
+                priceExtras = { priceBeforeFee: basePrice, estimatedFee: fee, feeStatus: "confirmed" };
+              } catch (err) {
+                console.error(`Marcus pricing failed for ${entry.cinema.name}:`, err.message);
+              }
+              const built = buildResultIfWithinWindow({
+                theaterName: entry.cinema.name,
+                distanceMin: entry.cinema.distanceMin,
+                startTimeRaw: entry.startTimeRaw,
+                format: entry.format,
+                price,
+                priceSource,
+                priceExtras,
+                bookingLink: entry.bookingLink,
+                chain: "marcus",
+              });
+              if (built) results.push(built);
+            })
+          )
+        );
+      } catch (err) {
+        console.error(`Marcus showtime discovery failed:`, err.message);
       }
     }
 
