@@ -108,7 +108,7 @@ if (APP_PASSWORD) {
 // app's other in-memory caches (SerpApi schedule cache, MediaStinger's
 // in-theaters cache). Not a real concern given how infrequently this
 // app actually redeploys.
-const SEARCH_RATE_LIMIT_PER_DAY = Number(process.env.SEARCH_RATE_LIMIT_PER_DAY) || 20;
+const SEARCH_RATE_LIMIT_PER_DAY = Number(process.env.SEARCH_RATE_LIMIT_PER_DAY) || 200;
 const RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const searchCountsByIp = new Map();
 
@@ -2764,7 +2764,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
 // On-demand pricing for a single Regal performance -- used by the
 // frontend's overflow "Show them" path to fetch a real ticket price
 // for showings that were beyond the per-theater cap during the main search.
-app.get("/api/price-regal-showing", searchRateLimiter, async (req, res) => {
+app.get("/api/price-regal-showing", async (req, res) => {
   const { cinemaCode, performanceId, movieId, movie, dateISO, startTime, format } = req.query;
   if (!cinemaCode || !performanceId || !movie || !dateISO) {
     return res.status(400).json({ error: "cinemaCode, performanceId, movie, and dateISO are required" });
