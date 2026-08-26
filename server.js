@@ -4,7 +4,7 @@ const { findNearbyTheaters } = require("./lib/theaters-overpass");
 const { estimatedMinutesAway, minutesToMeters } = require("./lib/distance");
 const { getPricedShowtimes, getTheaterSchedule } = require("./lib/priceAdapters/serpapi");
 const { resolveCanonicalLocation } = require("./lib/serpapi-location");
-const { getPricedShowtimes: getRegalPricedShowtimes, getShowtimesForTheater: getRegalShowtimesForTheater } = require("./lib/priceAdapters/regal-scrapedo");
+const { getPricedShowtimes: getRegalPricedShowtimes, getShowtimesForTheater: getRegalShowtimesForTheater, getCachedShowtimesForTheater: getCachedRegalShowtimes } = require("./lib/priceAdapters/regal-scrapedo");
 const REGAL_CINEMA_MAP = require("./lib/regal-cinema-map");
 const { getRegalTheaters } = require("./lib/regal-theaters");
 const REGAL_CA_THEATERS = require("./lib/regal-theaters-ca");
@@ -2359,137 +2359,64 @@ app.get("/api/movies", async (req, res) => {
     }
 
     // Pull movie titles from chain adapters that don't need SerpApi.
-    // Marcus: use the CMS /cms/v2/films endpoint directly.
-    const marcusCinemasHere = getMarcusCinemasInRange({
-      originLat, originLng, discoveryRadiusMin: Number(radiusMin), estimatedMinutesAway,
-    });
-    const marcusMovieTitles = new Set();
-    if (marcusCinemasHere.length > 0) {
-      try {
-        // Fetch film listings for every Marcus cinema in range in parallel.
-        const filmLists = await Promise.all(
-          marcusCinemasHere.map(async (cinema) => {
-            try {
-              const token = await getMarcusToken();
-              const res = await fetch(
-                `https://api-injin.marcustheatres.com/cms/v2/films?cinemaid=${cinema.id}&showdate=${searchDateISO}`,
-                {
-                  headers: {
-                    Accept: "application/json", appplatform: "WEBSITE",
-                    appversion: "1.0.0", dataversion: "en-US",
-                    origin: "https://ticketing.marcustheatres.com",
-                    authorization: `Bearer ${token}`,
-                  },
-                  signal: AbortSignal.timeout(10000),
-                }
-              );
-              if (!res.ok) return [];
-              const films = await res.json();
-              if (!Array.isArray(films)) return [];
-              // /cms/v2/films returns the full catalog — check showtimes to keep
-              // only films that actually have sessions on this date.
-              const titlesWithSessions = await Promise.all(
-                films.map((f) => priceLimit(async () => {
-                  try {
-                    const token2 = await getMarcusToken();
-                    const stRes = await fetch(
-                      `https://api-injin.marcustheatres.com/cms/v2/${f.id}/showtimes?showdate=${searchDateISO}&cinemaid=${cinema.id}`,
-                      {
-                        headers: {
-                          Accept: "application/json", appplatform: "WEBSITE",
-                          appversion: "1.0.0", dataversion: "en-US",
-                          origin: "https://ticketing.marcustheatres.com",
-                          authorization: `Bearer ${token2}`,
-                        },
-                        signal: AbortSignal.timeout(8000),
-                      }
-                    );
-                    if (!stRes.ok) return null;
-                    const sts = await stRes.json();
-                    return Array.isArray(sts) && sts.length > 0 ? f.title : null;
-                  } catch { return null; }
-                }))
-              );
-              return titlesWithSessions.filter(Boolean);
-            } catch {
-              return [];
+    // Strategy: AMC always (fast official API); Regal only if already cached
+    // from a prior /api/search in this session (free, no proxy cost).
+    const chainMovieTitles = new Set();
+
+    // AMC — official API, no proxy needed, fastest option.
+    try {
+      const amcStates = latLngToUsStates(originLat, originLng);
+      const seenIds = new Set();
+      const amcTheatersHere = [];
+      await Promise.all(
+        amcStates.map(async (state) => {
+          try {
+            const ts = await getAmcTheatersByState(state);
+            for (const t of ts) {
+              if (seenIds.has(t.id)) continue;
+              seenIds.add(t.id);
+              if (estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin))
+                amcTheatersHere.push(t);
             }
-          })
-        );
-        filmLists.flat().forEach((t) => marcusMovieTitles.add(t));
-        if (marcusMovieTitles.size > 0) {
-          console.error(`/api/movies: Marcus direct — ${marcusMovieTitles.size} title(s) from ${marcusCinemasHere.length} cinema(s)`);
-        }
-      } catch (err) {
-        console.error("/api/movies: Marcus direct fetch failed:", err.message);
-      }
-    }
-
-    // AMC: use the official showtimes API per theater in range.
-    const amcMovieTitles = new Set();
-    const amcStates = latLngToUsStates(originLat, originLng);
-    if (amcStates.length > 0) {
-      try {
-        const seenIds = new Set();
-        const amcTheatersHere = [];
-        await Promise.all(
-          amcStates.map(async (state) => {
+          } catch { /* skip state on error */ }
+        })
+      );
+      if (amcTheatersHere.length > 0) {
+        const filmLists = await Promise.all(
+          amcTheatersHere.map(async (t) => {
             try {
-              const stateTheaters = await getAmcTheatersByState(state);
-              for (const t of stateTheaters) {
-                if (seenIds.has(t.id)) continue;
-                seenIds.add(t.id);
-                if (estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin)) {
-                  amcTheatersHere.push(t);
-                }
-              }
-            } catch { /* skip state on error */ }
+              const sts = await getAmcShowtimesForTheater({ theatreId: t.id, dateISO: searchDateISO });
+              return sts.map((s) => s.movieName).filter(Boolean);
+            } catch { return []; }
           })
         );
-        if (amcTheatersHere.length > 0) {
-          const filmLists = await Promise.all(
-            amcTheatersHere.map(async (t) => {
-              try {
-                const showtimes = await getAmcShowtimesForTheater({ theatreId: t.id, dateISO: searchDateISO });
-                return showtimes.map((s) => s.movieName).filter(Boolean);
-              } catch { return []; }
-            })
-          );
-          filmLists.flat().forEach((title) => amcMovieTitles.add(title));
-          if (amcMovieTitles.size > 0) {
-            console.error(`/api/movies: AMC direct — ${amcMovieTitles.size} title(s) from ${amcTheatersHere.length} theater(s)`);
-          }
-        }
-      } catch (err) {
-        console.error("/api/movies: AMC direct fetch failed:", err.message);
+        filmLists.flat().forEach((title) => chainMovieTitles.add(title));
+        if (chainMovieTitles.size > 0)
+          console.error(`/api/movies: AMC direct — ${chainMovieTitles.size} title(s) from ${amcTheatersHere.length} theater(s)`);
       }
+    } catch (err) {
+      console.error("/api/movies: AMC direct fetch failed:", err.message);
     }
 
-    // Regal: fetch the theater listing (already goes through Byparr/proxy,
-    // result is cached so a subsequent /api/search call gets it for free).
-    const regalMovieTitles = new Set();
+    // Regal — cache-only (no fresh proxy request). If /api/search already
+    // ran for this theater+date in this session, the result is in memory.
     try {
       const allRegal = await getRegalTheaters();
       const regalHere = allRegal.filter(
         (t) => estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin)
       );
-      if (regalHere.length > 0) {
-        const costTracker = { total: 0, byProvider: {} };
-        const filmLists = await Promise.all(
-          regalHere.map(async (t) => {
-            try {
-              const perfs = await getRegalShowtimesForTheater({ cinemaCode: t.code, dateISO: searchDateISO, costTracker });
-              return perfs.map((p) => p.movieName).filter(Boolean);
-            } catch { return []; }
-          })
-        );
-        filmLists.flat().forEach((title) => regalMovieTitles.add(title));
-        if (regalMovieTitles.size > 0) {
-          console.error(`/api/movies: Regal direct — ${regalMovieTitles.size} title(s) from ${regalHere.length} theater(s)`);
+      let regalHits = 0;
+      for (const t of regalHere) {
+        const cached = getCachedRegalShowtimes({ cinemaCode: t.code, dateISO: searchDateISO });
+        if (cached) {
+          cached.map((p) => p.movieName).filter(Boolean).forEach((title) => chainMovieTitles.add(title));
+          regalHits++;
         }
       }
+      if (regalHits > 0)
+        console.error(`/api/movies: Regal cache — titles from ${regalHits} theater(s) (cached)`);
     } catch (err) {
-      console.error("/api/movies: Regal direct fetch failed:", err.message);
+      console.error("/api/movies: Regal cache check failed:", err.message);
     }
 
     const schedules = await Promise.all(
@@ -2512,9 +2439,7 @@ app.get("/api/movies", async (req, res) => {
     // Deduplicate case-insensitively; prefer the first-seen casing.
     const moviesByKey = new Map();
     for (const title of [
-      ...marcusMovieTitles,
-      ...amcMovieTitles,
-      ...regalMovieTitles,
+      ...chainMovieTitles,
       ...schedules.flat().map((entry) => entry.movieName).filter(Boolean),
     ]) {
       const key = title.trim().toLowerCase();
