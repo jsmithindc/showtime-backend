@@ -2363,7 +2363,9 @@ app.get("/api/movies", async (req, res) => {
     // from a prior /api/search in this session (free, no proxy cost).
     const chainMovieTitles = new Set();
 
-    // AMC — official API, no proxy needed, fastest option.
+    // AMC — pick the single largest AMC in range (highest trailing number
+    // in the name, e.g. "AMC Mesquite 30" → 30) and fetch its showtimes.
+    // One request, no proxy, covers the widest movie selection.
     try {
       const amcStates = latLngToUsStates(originLat, originLng);
       const seenIds = new Set();
@@ -2382,17 +2384,14 @@ app.get("/api/movies", async (req, res) => {
         })
       );
       if (amcTheatersHere.length > 0) {
-        const filmLists = await Promise.all(
-          amcTheatersHere.map(async (t) => {
-            try {
-              const sts = await getAmcShowtimesForTheater({ theatreId: t.id, dateISO: searchDateISO });
-              return sts.map((s) => s.movieName).filter(Boolean);
-            } catch { return []; }
-          })
-        );
-        filmLists.flat().forEach((title) => chainMovieTitles.add(title));
-        if (chainMovieTitles.size > 0)
-          console.error(`/api/movies: AMC direct — ${chainMovieTitles.size} title(s) from ${amcTheatersHere.length} theater(s)`);
+        const screenCount = (t) => { const m = t.name.match(/(\d+)\s*$/); return m ? Number(m[1]) : 0; };
+        const biggest = amcTheatersHere.reduce((a, b) => screenCount(a) >= screenCount(b) ? a : b);
+        try {
+          const sts = await getAmcShowtimesForTheater({ theatreId: biggest.id, dateISO: searchDateISO });
+          sts.map((s) => s.movieName).filter(Boolean).forEach((title) => chainMovieTitles.add(title));
+          if (chainMovieTitles.size > 0)
+            console.error(`/api/movies: AMC direct — ${chainMovieTitles.size} title(s) from ${biggest.name}`);
+        } catch { /* silent — Regal cache or SerpApi may still contribute */ }
       }
     } catch (err) {
       console.error("/api/movies: AMC direct fetch failed:", err.message);
