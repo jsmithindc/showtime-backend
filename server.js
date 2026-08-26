@@ -2403,7 +2403,7 @@ app.get("/api/movies", async (req, res) => {
       try {
         const allRegal = await getRegalTheaters();
         const regalHere = allRegal.filter(
-          (t) => estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin)
+          (t) => estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin) * 1.15
         );
         if (regalHere.length > 0) {
           const costTracker = { total: 0, byProvider: {} };
@@ -2430,7 +2430,7 @@ app.get("/api/movies", async (req, res) => {
       try {
         const allRegal = await getRegalTheaters();
         const regalHere = allRegal.filter(
-          (t) => estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin)
+          (t) => estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin) * 1.15
         );
         for (const t of regalHere) {
           const cached = getCachedRegalShowtimes({ cinemaCode: t.code, dateISO: searchDateISO });
@@ -2567,7 +2567,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       const allRegal = await getRegalTheaters();
       for (const t of allRegal) {
         const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
-        if (dMin <= Number(radiusMin)) {
+        if (dMin <= Number(radiusMin) * 1.15) {
           const niceName = REGAL_CA_NAME_BY_CODE[t.code] || t.name;
           regalDirectTheaters.push({ ...t, name: niceName, distanceMin: dMin });
         }
