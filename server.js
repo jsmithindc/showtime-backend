@@ -2390,7 +2390,32 @@ app.get("/api/movies", searchRateLimiter, async (req, res) => {
               );
               if (!res.ok) return [];
               const films = await res.json();
-              return Array.isArray(films) ? films.map((f) => f.title).filter(Boolean) : [];
+              if (!Array.isArray(films)) return [];
+              // /cms/v2/films returns the full catalog — check showtimes to keep
+              // only films that actually have sessions on this date.
+              const titlesWithSessions = await Promise.all(
+                films.map((f) => priceLimit(async () => {
+                  try {
+                    const token2 = await getMarcusToken();
+                    const stRes = await fetch(
+                      `https://api-injin.marcustheatres.com/cms/v2/${f.id}/showtimes?showdate=${searchDateISO}&cinemaid=${cinema.id}`,
+                      {
+                        headers: {
+                          Accept: "application/json", appplatform: "WEBSITE",
+                          appversion: "1.0.0", dataversion: "en-US",
+                          origin: "https://ticketing.marcustheatres.com",
+                          authorization: `Bearer ${token2}`,
+                        },
+                        signal: AbortSignal.timeout(8000),
+                      }
+                    );
+                    if (!stRes.ok) return null;
+                    const sts = await stRes.json();
+                    return Array.isArray(sts) && sts.length > 0 ? f.title : null;
+                  } catch { return null; }
+                }))
+              );
+              return titlesWithSessions.filter(Boolean);
             } catch {
               return [];
             }
