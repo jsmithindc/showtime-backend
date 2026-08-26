@@ -2397,25 +2397,46 @@ app.get("/api/movies", async (req, res) => {
       console.error("/api/movies: AMC direct fetch failed:", err.message);
     }
 
-    // Regal — cache-only (no fresh proxy request). If /api/search already
-    // ran for this theater+date in this session, the result is in memory.
-    try {
-      const allRegal = await getRegalTheaters();
-      const regalHere = allRegal.filter(
-        (t) => estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin)
-      );
-      let regalHits = 0;
-      for (const t of regalHere) {
-        const cached = getCachedRegalShowtimes({ cinemaCode: t.code, dateISO: searchDateISO });
-        if (cached) {
-          cached.map((p) => p.movieName).filter(Boolean).forEach((title) => chainMovieTitles.add(title));
-          regalHits++;
+    // Regal — use cache if available (free), otherwise do a live fetch only
+    // when AMC produced nothing (i.e. no AMC in range for this market).
+    if (chainMovieTitles.size === 0) {
+      try {
+        const allRegal = await getRegalTheaters();
+        const regalHere = allRegal.filter(
+          (t) => estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin)
+        );
+        if (regalHere.length > 0) {
+          const costTracker = { total: 0, byProvider: {} };
+          // Check cache first; fall through to live fetch for any theater not yet cached.
+          const filmLists = await Promise.all(
+            regalHere.map(async (t) => {
+              const cached = getCachedRegalShowtimes({ cinemaCode: t.code, dateISO: searchDateISO });
+              if (cached) return cached.map((p) => p.movieName).filter(Boolean);
+              try {
+                const perfs = await getRegalShowtimesForTheater({ cinemaCode: t.code, dateISO: searchDateISO, costTracker });
+                return perfs.map((p) => p.movieName).filter(Boolean);
+              } catch { return []; }
+            })
+          );
+          filmLists.flat().forEach((title) => chainMovieTitles.add(title));
+          if (chainMovieTitles.size > 0)
+            console.error(`/api/movies: Regal direct — ${chainMovieTitles.size} title(s) from ${regalHere.length} theater(s)`);
         }
+      } catch (err) {
+        console.error("/api/movies: Regal fetch failed:", err.message);
       }
-      if (regalHits > 0)
-        console.error(`/api/movies: Regal cache — titles from ${regalHits} theater(s) (cached)`);
-    } catch (err) {
-      console.error("/api/movies: Regal cache check failed:", err.message);
+    } else {
+      // AMC had results — just check Regal cache for free, skip live fetch.
+      try {
+        const allRegal = await getRegalTheaters();
+        const regalHere = allRegal.filter(
+          (t) => estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin)
+        );
+        for (const t of regalHere) {
+          const cached = getCachedRegalShowtimes({ cinemaCode: t.code, dateISO: searchDateISO });
+          if (cached) cached.map((p) => p.movieName).filter(Boolean).forEach((title) => chainMovieTitles.add(title));
+        }
+      } catch { /* silent */ }
     }
 
     const schedules = await Promise.all(
