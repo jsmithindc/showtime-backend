@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.2.5</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.2.6</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1585,6 +1585,26 @@
       if (cheapestResult == null || r.price < cheapestResult.price) cheapestResult = r;
     }
 
+    // Default view: only show showings starting within 6 hours of the deadline.
+    // Earlier showings are hidden behind a "show more" toggle so the default
+    // view stays focused on actionable options close to "now + runtime".
+    const deadlineVal = els.deadline && els.deadline.value;
+    const EARLY_WINDOW_HOURS = 6;
+    let earlyResults = [];
+    let lateResults = displayResults;
+    if (deadlineVal) {
+      const [dh, dm] = deadlineVal.split(':').map(Number);
+      const deadlineMin = dh * 60 + (dm || 0);
+      const cutoffMin = deadlineMin - EARLY_WINDOW_HOURS * 60;
+      const startMin = (r) => {
+        const t = r.startTime || '';
+        const [sh, sm] = t.split(':').map(Number);
+        return sh * 60 + (sm || 0);
+      };
+      earlyResults = displayResults.filter((r) => startMin(r) < cutoffMin);
+      lateResults = displayResults.filter((r) => startMin(r) >= cutoffMin);
+    }
+
     const overflow = data.regalOverflow || [];
     const overflowByTheater = {};
     for (const r of overflow) {
@@ -1599,9 +1619,23 @@
         ).join('')
       : '';
 
-    els.results.innerHTML = filterChipsHtml + chainChipsHtml + sortToggleHtml + `<div class="list">${displayResults.map((r) =>
-      buildCardHtml(r, r === cheapestResult, opts)
-    ).join('')}</div>` + overflowHtml;
+    const earlyHtml = earlyResults.length
+      ? `<div id="early-showings-wrap" style="margin-top:8px;">
+           <button class="overflow-reveal-btn" onclick="document.getElementById('early-showings-list').style.display='';this.closest('#early-showings-wrap').querySelector('.early-toggle-btn-wrap').style.display='none';" style="font-size:12px; padding:5px 10px;">
+             Show ${earlyResults.length} earlier showing${earlyResults.length === 1 ? '' : 's'}
+           </button>
+           <div class="early-toggle-btn-wrap"></div>
+           <div id="early-showings-list" style="display:none;">
+             <div class="list">${earlyResults.map((r) => buildCardHtml(r, r === cheapestResult, opts)).join('')}</div>
+           </div>
+         </div>`
+      : '';
+
+    els.results.innerHTML = filterChipsHtml + chainChipsHtml + sortToggleHtml +
+      earlyHtml +
+      `<div class="list">${lateResults.map((r) =>
+        buildCardHtml(r, r === cheapestResult, opts)
+      ).join('')}</div>` + overflowHtml;
   }
 
   window.showRegalOverflow = async function(btn, showings) {
