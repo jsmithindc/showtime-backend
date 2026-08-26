@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.0.4</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.0.5</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -819,7 +819,9 @@
       }
       els.statusLine.textContent = data.movies.length
         ? `Found ${data.movies.length} movie(s) playing across ${data.theatersChecked} nearby theater(s) -- pick one from the Movie dropdown.`
-        : `No theaters found in range, or nothing came back -- try widening the radius.`;
+        : data.theatersChecked > 0
+          ? `Found ${data.theatersChecked} theater(s) nearby but couldn't retrieve their schedules (SerpApi quota may be exhausted).`
+          : `No theaters found in range -- try widening the radius.`;
     } catch (err) {
       els.statusLine.textContent = `Couldn't reach the server for movie lookup: ${err.message}`;
     } finally {

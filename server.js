@@ -41,7 +41,7 @@ const { getShowtimesForMovie: getHarkinsShowtimesForMovie, getTicketPricing: get
 const REGENCY_THEATER_MAP = require("./lib/regency-theater-map");
 const { getShowtimesForLocation: getRegencyShowtimesForLocation, getTicketPricing: getRegencyTicketPricing, getFilmIdMap: getRegencyFilmIdMap } = require("./lib/priceAdapters/regency-official");
 const { getAlamoCinemasInRange, getAlamoShowtimesForCinemas, getAlamoSessionPrice } = require("./lib/priceAdapters/alamo-official");
-const { getMarcusCinemasInRange, getMarcusShowtimesForCinemas, getMarcusSessionPrice } = require("./lib/priceAdapters/marcus-official");
+const { getMarcusCinemasInRange, getMarcusShowtimesForCinemas, getMarcusSessionPrice, getMarcusToken } = require("./lib/priceAdapters/marcus-official");
 const { getLandmarkTheatersInRange, getLandmarkShowtimesForTheaters, getLandmarkPricing } = require("./lib/priceAdapters/landmark-official");
 const { matchesMovie } = require("./lib/priceAdapters/serpapi");
 const CINEMARK_THEATER_SLUGS = require("./lib/cinemark-theater-slugs");
@@ -2363,6 +2363,48 @@ app.get("/api/movies", searchRateLimiter, async (req, res) => {
       // Fall through with the raw string, same as the main search route.
     }
 
+    // Pull movie titles from chain adapters that don't need SerpApi.
+    // Marcus: use the CMS /cms/v2/films endpoint directly.
+    const marcusCinemasHere = getMarcusCinemasInRange({
+      originLat, originLng, discoveryRadiusMin: Number(radiusMin), estimatedMinutesAway,
+    });
+    const marcusMovieTitles = new Set();
+    if (marcusCinemasHere.length > 0) {
+      try {
+        // Fetch film listings for every Marcus cinema in range in parallel.
+        const filmLists = await Promise.all(
+          marcusCinemasHere.map(async (cinema) => {
+            try {
+              const token = await getMarcusToken();
+              const res = await fetch(
+                `https://api-injin.marcustheatres.com/cms/v2/films?cinemaid=${cinema.id}&showdate=${searchDateISO}`,
+                {
+                  headers: {
+                    Accept: "application/json", appplatform: "WEBSITE",
+                    appversion: "1.0.0", dataversion: "en-US",
+                    origin: "https://ticketing.marcustheatres.com",
+                    authorization: `Bearer ${token}`,
+                  },
+                  signal: AbortSignal.timeout(10000),
+                }
+              );
+              if (!res.ok) return [];
+              const films = await res.json();
+              return Array.isArray(films) ? films.map((f) => f.title).filter(Boolean) : [];
+            } catch {
+              return [];
+            }
+          })
+        );
+        filmLists.flat().forEach((t) => marcusMovieTitles.add(t));
+        if (marcusMovieTitles.size > 0) {
+          console.error(`/api/movies: Marcus direct — ${marcusMovieTitles.size} title(s) from ${marcusCinemasHere.length} cinema(s)`);
+        }
+      } catch (err) {
+        console.error("/api/movies: Marcus direct fetch failed:", err.message);
+      }
+    }
+
     const schedules = await Promise.all(
       theatersInRange.map((theater) =>
         priceLimit(async () => {
@@ -2381,7 +2423,10 @@ app.get("/api/movies", searchRateLimiter, async (req, res) => {
     );
 
     const movies = [
-      ...new Set(schedules.flat().map((entry) => entry.movieName).filter(Boolean)),
+      ...new Set([
+        ...marcusMovieTitles,
+        ...schedules.flat().map((entry) => entry.movieName).filter(Boolean),
+      ]),
     ].sort();
 
     res.json({
