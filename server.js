@@ -2271,11 +2271,30 @@ app.get("/api/geocode", async (req, res) => {
 // something playing only at a specific local/independent theater that
 // wouldn't show up in a general nationwide "in theaters" listing.
 app.get("/api/popular-movies", async (req, res) => {
+  // Pull live showtimes from AMC Mesquite 30 (Dallas-area anchor) as the
+  // default "what's playing" list shown before the user sets a location.
+  // Mesquite 30 is chosen because it's a high-screen-count multiplex that
+  // carries nearly every wide-release title on any given day.
   try {
-    const movies = await getInTheatersList();
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const txTheaters = await getAmcTheatersByState("TX");
+    const mesquite = txTheaters.find((t) => /mesquite\s+30/i.test(t.name))
+      || txTheaters.find((t) => /mesquite/i.test(t.name));
+    if (!mesquite) {
+      return res.status(503).json({ error: "AMC Mesquite 30 not found", movies: [] });
+    }
+    const showtimes = await getAmcShowtimesForTheater({ theatreId: mesquite.id, dateISO: todayISO });
+    const seen = new Set();
+    const movies = [];
+    for (const s of showtimes) {
+      if (!s.movieName) continue;
+      const key = s.movieName.trim().toLowerCase();
+      if (!seen.has(key)) { seen.add(key); movies.push(s.movieName.trim()); }
+    }
+    movies.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
     res.json({ movies });
   } catch (err) {
-    console.error("Popular-movies lookup failed:", err.message);
+    console.error("Popular-movies (AMC Mesquite 30) lookup failed:", err.message);
     res.status(500).json({ error: err.message, movies: [] });
   }
 });
