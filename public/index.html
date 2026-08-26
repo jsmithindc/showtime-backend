@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.2.6</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.2.7</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1621,10 +1621,15 @@
 
     const earlyHtml = earlyResults.length
       ? `<div id="early-showings-wrap" style="margin-top:8px;">
-           <button class="overflow-reveal-btn" onclick="document.getElementById('early-showings-list').style.display='';this.closest('#early-showings-wrap').querySelector('.early-toggle-btn-wrap').style.display='none';" style="font-size:12px; padding:5px 10px;">
+           <button id="early-toggle-btn" class="overflow-reveal-btn" style="font-size:12px; padding:5px 10px;"
+             onclick="(function(btn){
+               const list = document.getElementById('early-showings-list');
+               const hidden = list.style.display === 'none';
+               list.style.display = hidden ? '' : 'none';
+               btn.textContent = hidden ? 'Hide earlier showings' : 'Show ${earlyResults.length} earlier showing${earlyResults.length === 1 ? '' : 's'}';
+             })(this)">
              Show ${earlyResults.length} earlier showing${earlyResults.length === 1 ? '' : 's'}
            </button>
-           <div class="early-toggle-btn-wrap"></div>
            <div id="early-showings-list" style="display:none;">
              <div class="list">${earlyResults.map((r) => buildCardHtml(r, r === cheapestResult, opts)).join('')}</div>
            </div>
