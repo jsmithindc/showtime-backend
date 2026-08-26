@@ -1044,7 +1044,10 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       // your deadline -- the worse failure mode -- so when uncertain,
       // filter as if trailers run long.
       const endMin = startMin + realRuntimeMin + trailerHigh;
-      if (startMin < nowMinutes - 15) return null;
+      // Alamo doesn't admit latecomers at all; all other chains sell tickets
+      // through trailers (~15 min past posted start time).
+      const gracePastStart = chain === "alamo" ? 0 : 15;
+      if (startMin < nowMinutes - gracePastStart) return null;
       if (endMin > deadlineMinutes) return null;
       if (!matchesWantedFormat(format, wantedFormats)) return null;
 
