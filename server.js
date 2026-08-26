@@ -24,7 +24,7 @@ const THEATER_DISPLAY_NAMES = {
   "New Vision Theatres Tilghman Square 8": "AMC Tilghman Square 8",
 };
 const EXCLUDED_THEATERS = require("./lib/excluded-theaters");
-const { getPricedShowtimes: getAmcPricedShowtimes } = require("./lib/priceAdapters/amc-official");
+const { getPricedShowtimes: getAmcPricedShowtimes, getShowtimesForTheater: getAmcShowtimesForTheater } = require("./lib/priceAdapters/amc-official");
 const { getAmcTheatersByState, findClosestAmcTheater } = require("./lib/amc-theaters-by-state");
 const AMC_THEATRE_MAP = require("./lib/amc-theatre-map"); // static fallback when live API is unavailable
 const {
@@ -2405,6 +2405,46 @@ app.get("/api/movies", searchRateLimiter, async (req, res) => {
       }
     }
 
+    // AMC: use the official showtimes API per theater in range.
+    const amcMovieTitles = new Set();
+    const amcStates = latLngToUsStates(originLat, originLng);
+    if (amcStates.length > 0) {
+      try {
+        const seenIds = new Set();
+        const amcTheatersHere = [];
+        await Promise.all(
+          amcStates.map(async (state) => {
+            try {
+              const stateTheaters = await getAmcTheatersByState(state);
+              for (const t of stateTheaters) {
+                if (seenIds.has(t.id)) continue;
+                seenIds.add(t.id);
+                if (estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin)) {
+                  amcTheatersHere.push(t);
+                }
+              }
+            } catch { /* skip state on error */ }
+          })
+        );
+        if (amcTheatersHere.length > 0) {
+          const filmLists = await Promise.all(
+            amcTheatersHere.map(async (t) => {
+              try {
+                const showtimes = await getAmcShowtimesForTheater({ theatreId: t.id, dateISO: searchDateISO });
+                return showtimes.map((s) => s.movieName).filter(Boolean);
+              } catch { return []; }
+            })
+          );
+          filmLists.flat().forEach((title) => amcMovieTitles.add(title));
+          if (amcMovieTitles.size > 0) {
+            console.error(`/api/movies: AMC direct — ${amcMovieTitles.size} title(s) from ${amcTheatersHere.length} theater(s)`);
+          }
+        }
+      } catch (err) {
+        console.error("/api/movies: AMC direct fetch failed:", err.message);
+      }
+    }
+
     const schedules = await Promise.all(
       theatersInRange.map((theater) =>
         priceLimit(async () => {
@@ -2425,6 +2465,7 @@ app.get("/api/movies", searchRateLimiter, async (req, res) => {
     const movies = [
       ...new Set([
         ...marcusMovieTitles,
+        ...amcMovieTitles,
         ...schedules.flat().map((entry) => entry.movieName).filter(Boolean),
       ]),
     ].sort();
