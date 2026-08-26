@@ -454,14 +454,16 @@ const FORMAT_SYNONYMS = {
   // chip gates these showings (deselecting recliner hides them, as expected).
   "luxury lounger": "recliner",
   "luxury lounger d-box": "recliner",
-  // Marcus large-format screens — premium auditoriums but not a separate
-  // format chip the user would filter on. Map to standard so they're included
-  // when the Standard chip is on (which it is by default).
+  // Marcus large-format premium auditoriums — UltraScreen DLX ($16) and
+  // Superscreen DLX ($15) are premium projection formats but have no
+  // dedicated filter chip; map to standard so they're included by default.
   "ultrascreen dlx": "standard",
   "ultrascreen": "standard",
   "superscreen dlx": "standard",
   "bigscreen": "standard",
-  "dremlounger": "standard",
+  // Marcus DreamLounger is recliner seating (standard projection), same
+  // category as Cinemark's Luxury Lounger.
+  "dreamlounger": "recliner",
 };
 
 function matchesWantedFormat(realFormat, wantedFormats) {
