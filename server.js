@@ -2680,10 +2680,13 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     let regalScrapeDoCallsUsed = 0;
     const regalCreditsByProvider = {};
 
+    // Per-request limiter so stale tasks from a previous search (e.g. stuck
+    // waiting on byparr timeouts) don't bleed into this search's theater list.
+    const regalPriceLimit = pLimit(3);
     try {
       await Promise.all(
         uniqueRegalTheaters.map((theater) =>
-          priceLimit(async () => {
+          regalPriceLimit(async () => {
             const theaterName = theater.name;
             const cinemaCode = theater.code;
             try {
