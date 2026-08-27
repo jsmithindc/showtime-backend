@@ -3166,4 +3166,28 @@ console.log(
 );
 
 // TEMPORARY debug endpoint: fetch a Regal showtime page via byparr and
-app.listen(PORT, () => console.log(`Showtime Finder API on :${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Showtime Finder API on :${PORT}`);
+
+  // Keep the byparr named session warm so the first real search doesn't pay
+  // the cold-start cost of solving the Cloudflare challenge from scratch.
+  // Byparr's default session timeout is 15 minutes of inactivity; we ping
+  // every 10 minutes to stay well under that.
+  if (process.env.BYPARR_URL && process.env.BYPARR_SECRET) {
+    const keepByparrWarm = () => {
+      fetch(`${process.env.BYPARR_URL}/v1`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Byparr-Token": process.env.BYPARR_SECRET,
+        },
+        body: JSON.stringify({ cmd: "sessions.list" }),
+      })
+        .then((r) => r.json())
+        .then((j) => console.log(`byparr keepalive: sessions=${JSON.stringify(j.sessions ?? [])}`))
+        .catch((err) => console.error(`byparr keepalive failed: ${err.message}`));
+    };
+    keepByparrWarm(); // immediate ping on startup
+    setInterval(keepByparrWarm, 10 * 60 * 1000);
+  }
+});
