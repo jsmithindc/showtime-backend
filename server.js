@@ -2749,7 +2749,16 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
                     `${inWindow.length} within window: ${inWindow.map((s) => `${s.time24h}/${s.format}`).join(", ")}`
                   );
 
-                  await Promise.all(inWindow.map(async (s) => {
+                  // Camofox pricing: sequential within a theater to avoid flooding
+                  // Atom with simultaneous page loads (causes bot detection / 422s).
+                  // Theaters still run in parallel via the outer Promise.all in
+                  // search-regal, so Delta Shores and UA Laguna Village price concurrently
+                  // while still being sequential within each theater. SSE streams each
+                  // result as it arrives rather than waiting for all of them.
+                  const pricingIterator = isCamofoxConfigured() && theaterUrl
+                    ? (fn) => inWindow.reduce((p, s) => p.then(() => fn(s)), Promise.resolve())
+                    : (fn) => Promise.all(inWindow.map(fn));
+                  await pricingIterator(async (s) => {
                     let pricing = null;
                     let checkoutId = s.checkoutId || null;
                     try {
@@ -2786,7 +2795,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
                       } : {}),
                     });
                     if (built) sseWrite("result", built);
-                  }));
+                  });
                 }
               } catch (atomErr) {
                 console.error(`Atom path failed for ${theaterName}, falling back to Regal proxy:`, atomErr.message);
