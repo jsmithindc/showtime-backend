@@ -3186,8 +3186,15 @@ app.listen(PORT, () => {
         },
         body: JSON.stringify({ cmd: "sessions.list" }),
       })
-        .then((r) => r.json())
-        .then((j) => console.log(`byparr keepalive: sessions=${JSON.stringify(j.sessions ?? [])}`))
+        .then((r) => r.text())
+        .then((t) => {
+          try {
+            const j = JSON.parse(t);
+            console.log(`byparr keepalive: sessions=${JSON.stringify(j.sessions ?? [])}`);
+          } catch {
+            // HTML response right after byparr boots (nginx not ready yet) -- silent, not a real error.
+          }
+        })
         .catch((err) => console.error(`byparr keepalive failed: ${err.message}`));
     };
     keepByparrWarm(); // immediate ping on startup
