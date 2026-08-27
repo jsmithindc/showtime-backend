@@ -6,7 +6,6 @@ const { getPricedShowtimes, getTheaterSchedule } = require("./lib/priceAdapters/
 const { resolveCanonicalLocation } = require("./lib/serpapi-location");
 const { getPricedShowtimes: getRegalPricedShowtimes, getShowtimesForTheater: getRegalShowtimesForTheater, getCachedShowtimesForTheater: getCachedRegalShowtimes } = require("./lib/priceAdapters/regal-scrapedo");
 const { getAtomShowtimes, getAtomCheckoutPricing } = require("./lib/priceAdapters/atom-tickets");
-const { isConfigured: isCamofoxConfigured, getAtomShowtimesViaCamofox, getAtomCheckoutPricingViaCamofox } = require("./lib/priceAdapters/atom-camofox");
 const REGAL_CINEMA_MAP = require("./lib/regal-cinema-map");
 const { getRegalTheaters } = require("./lib/regal-theaters");
 const REGAL_CA_THEATERS = require("./lib/regal-theaters-ca");
@@ -2696,49 +2695,17 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               // --- Atom Tickets path (disabled: theater page requires AJAX/network-idle) ---
               // Atom's theater page loads showtimes via XHR after initial render;
               // no static-HTML or basic-JS-render proxy captures the checkout links.
-              // Re-enable (DISABLE_ATOM_PATH !== "false") once byparr is reliably
-              // handling the theater page with full network-idle wait.
-              //
-              // --- Atom Tickets path (no proxy, no credits) ---
-              // Try fetching Regal showtimes and pricing directly from Atom
-              // Tickets instead of going through the proxy chain. Atom is a
-              // legitimate Regal reseller; their pages are plain SSR HTML with
-              // no Cloudflare protection. Falls back to the proxy chain below
-              // if the theater isn't listed on Atom or the fetch fails.
-              // Atom path is paused: theater page loads showtimes via AJAX so no
-              // static/JS-render proxy captures the checkout links. Set
-              // Atom path: use Camofox browser automation when configured (CAMOFOX_URL set),
-              // otherwise the legacy HTML-parse path (ENABLE_ATOM_PATH=true) as fallback.
-              // Camofox is preferred because Atom's theater page loads showtimes via XHR;
-              // static/JS-render proxies can't capture the showtime buttons reliably.
-              const ATOM_PATH_ENABLED = isCamofoxConfigured() || process.env.ENABLE_ATOM_PATH === "true";
+              // Set ENABLE_ATOM_PATH=true to re-enable the legacy HTML-parse path
+              // if a working proxy is available.
+              const ATOM_PATH_ENABLED = process.env.ENABLE_ATOM_PATH === "true";
               let usedAtomPath = false;
               if (ATOM_PATH_ENABLED) try {
-                let found, atomShowtimes, theaterUrl;
-
-                if (isCamofoxConfigured()) {
-                  // Camofox path: real browser, network-idle, full XHR-loaded showtimes
-                  const result = await getAtomShowtimesViaCamofox({
-                    theaterName,
-                    regalCode: cinemaCode,
-                    dateISO: searchDateISO,
-                    movieTitle: movie,
-                  });
-                  found = result.found;
-                  atomShowtimes = result.showtimes;
-                  theaterUrl = result.theaterUrl;
-                } else {
-                  // Legacy HTML-parse path (may miss XHR-loaded showtimes)
-                  const result = await getAtomShowtimes({
-                    theaterName,
-                    regalCode: cinemaCode,
-                    dateISO: searchDateISO,
-                    movieTitle: movie,
-                  });
-                  found = result.found;
-                  atomShowtimes = result.showtimes;
-                }
-
+                const { found, showtimes: atomShowtimes } = await getAtomShowtimes({
+                  theaterName,
+                  regalCode: cinemaCode,
+                  dateISO: searchDateISO,
+                  movieTitle: movie,
+                });
                 if (found) {
                   usedAtomPath = true;
                   const inWindow = atomShowtimes.filter((s) =>
@@ -2748,54 +2715,23 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
                     `Atom [${theaterName}]: ${atomShowtimes.length} showtime(s) for "${movie}", ` +
                     `${inWindow.length} within window: ${inWindow.map((s) => `${s.time24h}/${s.format}`).join(", ")}`
                   );
-
-                  // Camofox pricing: sequential within a theater to avoid flooding
-                  // Atom with simultaneous page loads (causes bot detection / 422s).
-                  // Theaters still run in parallel via the outer Promise.all in
-                  // search-regal, so Delta Shores and UA Laguna Village price concurrently
-                  // while still being sequential within each theater. SSE streams each
-                  // result as it arrives rather than waiting for all of them.
-                  const pricingIterator = isCamofoxConfigured() && theaterUrl
-                    ? (fn) => inWindow.reduce((p, s) => p.then(() => fn(s)), Promise.resolve())
-                    : (fn) => Promise.all(inWindow.map(fn));
-                  await pricingIterator(async (s) => {
+                  await Promise.all(inWindow.map(async (s) => {
                     let pricing = null;
-                    let checkoutId = s.checkoutId || null;
-                    try {
-                      if (isCamofoxConfigured() && theaterUrl) {
-                        const result = await getAtomCheckoutPricingViaCamofox({
-                          theaterUrl,
-                          movieTitle: movie,
-                          time12h: s.time12h,
-                          format: s.format,
-                        });
-                        pricing = result.pricing;
-                        checkoutId = result.checkoutId || checkoutId;
-                      } else if (checkoutId) {
-                        pricing = await getAtomCheckoutPricing(checkoutId);
-                      }
-                    } catch (err) {
-                      console.error(`Atom checkout ${checkoutId || s.time12h} failed:`, err.message);
+                    try { pricing = await getAtomCheckoutPricing(s.checkoutId); } catch (err) {
+                      console.error(`Atom checkout ${s.checkoutId} failed:`, err.message);
                     }
-
                     const built = regalResultIfWithinWindow({
                       theaterName,
                       distanceMin: theater.distanceMin,
                       startTimeRaw: s.time24h,
                       format: s.format,
                       price: pricing ? pricing.adultCents / 100 : null,
-                      bookingLink: checkoutId ? `https://www.atomtickets.com/checkout/${checkoutId}` : null,
+                      bookingLink: `https://www.atomtickets.com/checkout/${s.checkoutId}`,
                       priceSource: "atom-tickets",
-                      ...(pricing ? {
-                        priceExtras: {
-                          priceBeforeFee: pricing.baseCents / 100,
-                          estimatedFee: pricing.feeCents / 100,
-                          feeStatus: "exact",
-                        },
-                      } : {}),
+                      ...(pricing ? { priceExtras: { priceBeforeFee: pricing.baseCents / 100, estimatedFee: pricing.feeCents / 100, feeStatus: "exact" } } : {}),
                     });
                     if (built) sseWrite("result", built);
-                  });
+                  }));
                 }
               } catch (atomErr) {
                 console.error(`Atom path failed for ${theaterName}, falling back to Regal proxy:`, atomErr.message);
@@ -2803,7 +2739,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               } // end ATOM_PATH_ENABLED
 
               if (!usedAtomPath) {
-              // --- Regal proxy chain fallback ---
+              // --- Regal proxy chain ---
               const allPerformances = await getRegalShowtimesForTheater({
                 cinemaCode,
                 dateISO: searchDateISO,
