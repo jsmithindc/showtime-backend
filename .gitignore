@@ -1,4 +1,4 @@
-node_modules/
 start.sh
+node_modules/
 .overpass-cache.json
 .serpapi-schedule-cache.json

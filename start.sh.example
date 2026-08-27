@@ -36,6 +36,13 @@ export GEOAPIFY_API_KEY="paste-your-real-key-here"
 # Capture from ticketing.marcustheatres.com DevTools → Network → any /cms/v2/ request's
 # Authorization header. Token appears long-lived despite 30-min exp claim.
 export MARCUS_TOKEN="paste-your-real-token-here"
+# Self-hosted Camofox browser automation server, exposed via Cloudflare Tunnel.
+# Used for Atom ticket pricing on Regal theaters (fetches atomtickets.com with
+# full JS rendering). Both values required; userId/sessionKey are arbitrary
+# shared secrets you pick -- Camofox uses them to namespace browser sessions.
+export CAMOFOX_URL="https://camofox.yourdomain.com"
+export CAMOFOX_USER_ID="paste-your-chosen-user-id-here"
+export CAMOFOX_SESSION_KEY="paste-your-chosen-session-key-here"
 export DISABLE_REGAL_PRICING="false"  # set to "true" to pause Regal/Scrape.do pricing again
 export DISABLE_CINEMARK_PRICING="false"  # set to "true" to pause Cinemark direct pricing
 # Cinema West (Country Club Cinema) fetches its own access token live --
