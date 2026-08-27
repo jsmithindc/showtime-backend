@@ -2689,14 +2689,24 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
             try {
               const costTracker = { total: 0, byProvider: {} };
 
+              // --- Atom Tickets path (disabled: theater page requires AJAX/network-idle) ---
+              // Atom's theater page loads showtimes via XHR after initial render;
+              // no static-HTML or basic-JS-render proxy captures the checkout links.
+              // Re-enable (DISABLE_ATOM_PATH !== "false") once byparr is reliably
+              // handling the theater page with full network-idle wait.
+              //
               // --- Atom Tickets path (no proxy, no credits) ---
               // Try fetching Regal showtimes and pricing directly from Atom
               // Tickets instead of going through the proxy chain. Atom is a
               // legitimate Regal reseller; their pages are plain SSR HTML with
               // no Cloudflare protection. Falls back to the proxy chain below
               // if the theater isn't listed on Atom or the fetch fails.
+              // Atom path is paused: theater page loads showtimes via AJAX so no
+              // static/JS-render proxy captures the checkout links. Set
+              // ENABLE_ATOM_PATH=true on Render to re-enable when byparr is stable.
+              const ATOM_PATH_ENABLED = process.env.ENABLE_ATOM_PATH === "true";
               let usedAtomPath = false;
-              try {
+              if (ATOM_PATH_ENABLED) try {
                 const { found, showtimes: atomShowtimes } = await getAtomShowtimes({
                   theaterName,
                   regalCode: cinemaCode,
@@ -2744,7 +2754,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               } catch (atomErr) {
                 console.error(`Atom path failed for ${theaterName}, falling back to Regal proxy:`, atomErr.message);
                 usedAtomPath = false;
-              }
+              } // end ATOM_PATH_ENABLED
 
               if (!usedAtomPath) {
               // --- Regal proxy chain fallback ---
