@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.5.4</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.5.5</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -552,6 +552,7 @@
   </div>
 
   <div class="status-line" id="statusLine"></div>
+  <div id="timingBar" style="display:none; font-size:12px; color:var(--ink-dim); margin-bottom:10px; font-family:monospace;"></div>
   <div id="banners"></div>
   <div id="results"></div>
 </div>
@@ -882,6 +883,8 @@
 
     if (regalEs) { regalEs.close(); regalEs = null; }
     regalStillChecking = false;
+    const _timingBar = document.getElementById('timingBar');
+    if (_timingBar) _timingBar.style.display = 'none';
     els.banners.innerHTML = '';
     els.results.innerHTML = '';
     activeResultFormats = new Set(); seenResultFormats = new Set(); // fresh search -- reset to "all formats on"
@@ -922,6 +925,25 @@
     els.searchBtn.disabled = true;
     els.searchBtn.textContent = 'Searching...';
     els.statusLine.textContent = 'Checking nearby theaters...';
+
+    // Timing bar
+    const timingBar = document.getElementById('timingBar');
+    const t0 = Date.now();
+    let timingFirstResults = null, timingFirstRegal = null, timingDone = null;
+    let timingTick = null;
+    const renderTiming = (done) => {
+      const elapsed = (ms) => (ms / 1000).toFixed(1) + 's';
+      const now = Date.now();
+      const parts = [`elapsed: ${elapsed(now - t0)}`];
+      if (timingFirstResults !== null) parts.push(`first results: ${elapsed(timingFirstResults - t0)}`);
+      if (timingFirstRegal !== null) parts.push(`first Regal: ${elapsed(timingFirstRegal - t0)}`);
+      if (timingDone !== null) parts.push(`done: ${elapsed(timingDone - t0)}`);
+      timingBar.style.display = '';
+      timingBar.textContent = parts.join('  ·  ');
+      if (done && timingTick) { clearInterval(timingTick); timingTick = null; }
+    };
+    timingTick = setInterval(() => renderTiming(false), 250);
+    renderTiming(false);
 
     // When the user typed a place/zip instead of coordinates, geocode it
     // ONCE here before firing both /api/search and /api/search-regal.
@@ -983,6 +1005,7 @@
       regalEs.addEventListener('result', (e) => {
         try {
           const result = JSON.parse(e.data);
+          if (timingFirstRegal === null) { timingFirstRegal = Date.now(); renderTiming(false); }
           regalResults.push(result);
           // Filter Regal results out of lastRenderData each time so we don't
           // double-count cards from previous SSE events (renderResults updates
@@ -1007,6 +1030,8 @@
       });
 
       regalEs.addEventListener('done', () => {
+        timingDone = Date.now();
+        renderTiming(true);
         regalEs.close();
         regalEs = null;
         resolve(regalResults);
@@ -1030,6 +1055,8 @@
         return;
       }
 
+      timingFirstResults = Date.now();
+      renderTiming(false);
       renderResults(data);
 
       // Regal's results, if requested, merge in whenever they're ready --
@@ -1053,7 +1080,7 @@
     } finally {
       els.searchBtn.disabled = false;
       els.searchBtn.textContent = searchMode === 'window' ? 'Find what fits' : 'Find showtimes';
-      if (!wantsRegal) notifySearchComplete(lastRenderData?.results?.length ?? 0);
+      if (!wantsRegal) { timingDone = Date.now(); renderTiming(true); notifySearchComplete(lastRenderData?.results?.length ?? 0); }
     }
   }
 
