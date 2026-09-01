@@ -25,7 +25,7 @@ const THEATER_DISPLAY_NAMES = {
   "New Vision Theatres Tilghman Square 8": "AMC Tilghman Square 8",
 };
 const EXCLUDED_THEATERS = require("./lib/excluded-theaters");
-const { getPricedShowtimes: getAmcPricedShowtimes, getShowtimesForTheater: getAmcShowtimesForTheater } = require("./lib/priceAdapters/amc-official");
+const { getPricedShowtimes: getAmcPricedShowtimes, getShowtimesForTheater: getAmcShowtimesForTheater, getRuntimeFromCatalog: getAmcRuntimeFromCatalog } = require("./lib/priceAdapters/amc-official");
 const { getAmcTheatersByState, findClosestAmcTheater } = require("./lib/amc-theaters-by-state");
 const AMC_THEATRE_MAP = require("./lib/amc-theatre-map"); // static fallback when live API is unavailable
 const {
@@ -158,29 +158,51 @@ const RUNTIME_MIN = 128;
 // The slug comes from the static nationwide theater list filtered by distance
 // -- no network -- so this can be resolved before discovery runs and doesn't
 // give back the head start of kicking the lookup off early.
-function makeRuntimeSource({ originLat, originLng, radiusMin }) {
-  let cinemarkSlug = null;
+function makeRuntimeSource({ originLat, originLng, radiusMin, dateISO }) {
+  // EVERY Cinemark in range, nearest first -- not just the closest one.
+  // A theater page only lists what's playing THERE, so a single page answers
+  // for the films at that location and silently misses the rest. Live run:
+  // Coyote vs. ACME, Mutiny, Oak Street and Tony resolved from DOCO while The
+  // Dog Stars, Colony and a dozen others fell through to SerpApi and 429'd,
+  // landing on the 128-minute constant. Those films are playing -- just not at
+  // that one theater.
+  //
+  // Cheap to widen: getRawHtml caches per slug, so N theaters costs N page
+  // fetches for the whole search regardless of how many titles are resolved.
+  let cinemarkSlugs = [];
   try {
     const allCinemark = require("./lib/cinemark-theaters");
-    const nearest = allCinemark
+    cinemarkSlugs = allCinemark
       .map((t) => ({ slug: t.slug, dMin: estimatedMinutesAway(originLat, originLng, t.lat, t.lng) }))
-      .filter((t) => t.slug && t.dMin <= Number(radiusMin) * 1.15)
-      .sort((a, b) => a.dMin - b.dMin)[0];
-    cinemarkSlug = nearest ? nearest.slug : null;
+      .filter((t) => t.slug && t.dMin <= Number(radiusMin) * 1.5)
+      .sort((a, b) => a.dMin - b.dMin)
+      .map((t) => t.slug);
   } catch {
     // Theater list not generated yet -- fall through to the other sources.
   }
 
   return async function runtimeFromFreeSources(movieTitle) {
-    if (cinemarkSlug) {
+    // AMC's national anchor first: ONE request answers for most of what's
+    // playing anywhere, so it resolves nearly every title before any per-title
+    // lookup runs. The Cinemark pages below only know what plays at those
+    // specific theaters, which is why they answered for some films and missed
+    // others entirely.
+    try {
+      const fromCatalog = await getAmcRuntimeFromCatalog(movieTitle, dateISO);
+      if (fromCatalog != null) return fromCatalog;
+    } catch (err) {
+      console.error(`Runtime: AMC catalog lookup failed for "${movieTitle}":`, err.message);
+    }
+
+    for (const slug of cinemarkSlugs) {
       try {
-        const fromCinemark = await getRuntimeForMovieAtTheater(cinemarkSlug, movieTitle);
+        const fromCinemark = await getRuntimeForMovieAtTheater(slug, movieTitle);
         if (fromCinemark != null) {
-          console.error(`Runtime for "${movieTitle}": ${fromCinemark} min from Cinemark (${cinemarkSlug}) -- real data, no SerpApi call.`);
+          console.error(`Runtime for "${movieTitle}": ${fromCinemark} min from Cinemark (${slug}) -- real data, no SerpApi call.`);
           return fromCinemark;
         }
       } catch (err) {
-        console.error(`Runtime: Cinemark lookup failed for "${movieTitle}" via ${cinemarkSlug}:`, err.message);
+        console.error(`Runtime: Cinemark lookup failed for "${movieTitle}" via ${slug}:`, err.message);
       }
     }
     return getHarkinsRuntimeForMovie(movieTitle);
@@ -763,7 +785,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     const runtimePromise = getRuntimeInfo(
       movie,
       RUNTIME_MIN,
-      makeRuntimeSource({ originLat, originLng, radiusMin })
+      makeRuntimeSource({ originLat, originLng, radiusMin, dateISO: searchDateISO })
     );
 
     function wantChain(name) {
@@ -2864,7 +2886,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     const runtimePromise = getRuntimeInfo(
       movie,
       RUNTIME_MIN,
-      makeRuntimeSource({ originLat, originLng, radiusMin })
+      makeRuntimeSource({ originLat, originLng, radiusMin, dateISO: searchDateISO })
     );
 
     const radiusMeters = minutesToMeters(Number(radiusMin));
@@ -3557,7 +3579,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
     //
     // Built once rather than per title: it resolves the nearest Cinemark slug
     // from the static theater list, which doesn't change between titles.
-    const windowRuntimeSource = makeRuntimeSource({ originLat, originLng, radiusMin });
+    const windowRuntimeSource = makeRuntimeSource({ originLat, originLng, radiusMin, dateISO: searchDateISO });
 
     const runtimeByTitle = {};
     await Promise.all(
