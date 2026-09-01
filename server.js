@@ -2964,7 +2964,16 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders();
-      res.write(`event: done\ndata: ${JSON.stringify({ movie })}\n\n`);
+      // Report itself even on the early exit. Regal runs in this separate
+      // endpoint, so the movie search's chain report has no Regal row unless
+      // this sends one -- and a bare done event made Regal vanish from the
+      // report entirely rather than saying why, which is the exact failure the
+      // report exists to prevent.
+      res.write(`event: done\ndata: ${JSON.stringify({
+        movie,
+        chainReports: [{ chain: "regal", status: "failed", theaters: 0, showings: 0,
+          detail: "Regal pricing is disabled (DISABLE_REGAL_PRICING)" }],
+      })}\n\n`);
       return res.end();
     }
 
@@ -2973,7 +2982,10 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders();
-      res.write(`event: done\ndata: ${JSON.stringify({ movie })}\n\n`);
+      res.write(`event: done\ndata: ${JSON.stringify({
+        movie,
+        chainReports: [{ chain: "regal", status: "no-theaters", theaters: 0, showings: 0, detail: null }],
+      })}\n\n`);
       return res.end();
     }
 
@@ -3216,7 +3228,15 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     res.end();
   } catch (err) {
     console.error("Regal search-regal outer error:", err);
-    sseWrite("done", { movie, searchDate: searchDateISO, error: err.message });
+    sseWrite("done", {
+      movie,
+      searchDate: searchDateISO,
+      error: err.message,
+      // Third exit that could leave Regal absent from the report. A search that
+      // blew up is exactly when someone needs to see WHY Regal contributed
+      // nothing, so it reports itself here too.
+      chainReports: [{ chain: "regal", status: "failed", theaters: 0, showings: 0, detail: err.message }],
+    });
     if (!res.writableEnded) res.end();
   }
 });
