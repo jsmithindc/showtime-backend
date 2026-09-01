@@ -3388,12 +3388,19 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
 
     const nativeSchedules = [];
     const nativelyCovered = new Set();   // theater names SerpApi should skip
+    // Venues found per chain, recorded separately from schedules produced. A
+    // chain can match a theater and still return nothing -- Marcus does exactly
+    // that when its credential is missing, since the adapter catches the
+    // per-cinema failure itself and returns an empty list without throwing.
+    // Without this the report called that "no theaters in range", which is
+    // wrong and points at the wrong problem.
+    const nativeVenueCounts = {};
     const windowChainErrors = {};
     function noteWindowChainError(chain, msg) {
       (windowChainErrors[chain] = windowChainErrors[chain] || []).push(msg);
     }
 
-    const [regalNative, amcNative, cinemaWestNative] = await Promise.all([
+    const nativeGroups = await Promise.all([
       // --- Regal: discovered from Regal's own theater list, like /api/search-regal
       (async () => {
         const out = [];
@@ -3402,6 +3409,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
           const inRange = allRegal
             .map((t) => ({ ...t, distanceMin: estimatedMinutesAway(originLat, originLng, t.lat, t.lng) }))
             .filter((t) => t.distanceMin <= Number(radiusMin) * CHAIN_DISCOVERY_NET);
+          nativeVenueCounts.regal = inRange.length;
           await Promise.all(inRange.map((t) => priceLimit(async () => {
             try {
               const costTracker = { total: 0, byProvider: {} };
@@ -3456,6 +3464,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
               }
             } catch (err) { noteWindowChainError("amc", err.message); }
           }
+          nativeVenueCounts.amc = here.length;
           await Promise.all(here.map((t) => priceLimit(async () => {
             try {
               const sts = await getAmcShowtimesForTheater({ theatreId: t.id, dateISO: searchDateISO });
@@ -3486,6 +3495,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
       (async () => {
         const out = [];
         const matched = theatersInRange.filter((t) => CINEMAWEST_THEATER_MAP[t.name] != null);
+        nativeVenueCounts.cinemawest = matched.length;
         await Promise.all(matched.map((theater) => priceLimit(async () => {
           try {
             // sitePath, NOT siteId: getFreshTokenCached fetches the theater's
@@ -3518,9 +3528,64 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
         })));
         return out;
       })(),
+      // --- Marcus / Landmark / Alamo: static cinema lists, and each adapter
+      // already fetches a cinema's WHOLE schedule and filters by title in JS.
+      // Passing no title just skips that filter, which is exactly what this
+      // mode wants. They were left on SerpApi in the first pass because I
+      // assumed a movieTitle parameter meant a movie-scoped API; it doesn't --
+      // only Harkins and Cinemark are genuinely movie-scoped. Live run from
+      // Libertyville sent Marcus Gurnee and Landmark Renaissance to SerpApi
+      // (and 429) while both had working native adapters sitting right here.
+      ...[
+        { chain: "marcus",   inRange: getMarcusCinemasInRange,   fetch: (cinemas) => getMarcusShowtimesForCinemas({ cinemas, movieTitle: "", dateISO: searchDateISO }) },
+        { chain: "landmark", inRange: getLandmarkTheatersInRange, fetch: (theaters) => getLandmarkShowtimesForTheaters({ theaters, movieTitle: "", dateISO: searchDateISO }) },
+        { chain: "alamo",    inRange: getAlamoCinemasInRange,     fetch: (cinemas) => getAlamoShowtimesForCinemas({ cinemas, movieTitle: "", dateISO: searchDateISO }) },
+      ].map(({ chain, inRange, fetch: fetchSchedule }) => (async () => {
+        const out = [];
+        try {
+          const venues = inRange({
+            originLat, originLng,
+            discoveryRadiusMin: Number(radiusMin) * CHAIN_DISCOVERY_NET,
+            estimatedMinutesAway,
+          });
+          nativeVenueCounts[chain] = venues.length;
+          if (venues.length === 0) return out;
+
+          const entries = await fetchSchedule(venues);
+          // One flat list across all this chain's venues -- regroup per cinema
+          // so each becomes its own schedule entry.
+          const byVenue = new Map();
+          for (const e of entries) {
+            const name = e.cinema?.name || e.cinema?.displayName;
+            if (!name) continue;
+            if (!byVenue.has(name)) byVenue.set(name, { cinema: e.cinema, entries: [] });
+            byVenue.get(name).entries.push(e);
+          }
+          for (const [name, { cinema, entries: venueEntries }] of byVenue) {
+            out.push({
+              chain,
+              theater: { name, distanceMin: cinema.distanceMin },
+              entries: venueEntries.map((e) => ({
+                movieName: e.movieName,
+                time: (e.startTimeRaw || "").slice(0, 5),
+                format: e.format,
+                price: null,
+                link: e.bookingLink || null,
+              })).filter((e) => e.movieName && e.time),
+            });
+          }
+        } catch (err) {
+          console.error(`Window search: ${chain} failed:`, err.message);
+          noteWindowChainError(chain, err.message);
+        }
+        return out;
+      })()),
     ]);
 
-    nativeSchedules.push(...regalNative, ...amcNative, ...cinemaWestNative);
+    // Six groups now (regal, amc, cinemawest, marcus, landmark, alamo), each an
+    // array of per-theater schedules. Flattened rather than destructured by
+    // position so adding another chain doesn't require touching this line.
+    for (const group of nativeGroups) nativeSchedules.push(...group);
 
     // Regal and AMC theaters come from their own APIs, not OSM, so they have to
     // be matched back to the OSM list by name -- and exact matching does not
@@ -3532,7 +3597,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
     // Containment in either direction handles the screen-count and format
     // suffixes OSM tends to carry. The length floor stops a short chain word
     // ("AMC") from swallowing unrelated theaters.
-    const nativeNameKeys = [...regalNative, ...amcNative, ...cinemaWestNative]
+    const nativeNameKeys = nativeSchedules
       .map(({ theater }) => normalizeTheaterName(theater.name).toLowerCase())
       .filter((n) => n.length >= 8);
 
@@ -3705,20 +3770,23 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
         // Fixed chain list, not "whichever produced schedules" -- a chain that
         // failed outright produces nothing, and that is precisely the case
         // worth reporting.
-        const CHAINS = ["regal", "amc", "cinemawest", "other"];
+        const CHAINS = ["regal", "amc", "cinemawest", "marcus", "landmark", "alamo", "other"];
         return CHAINS.map((chain) => {
           const mine = chain === "other"
             ? serpApiSchedules
             : nativeSchedules.filter((n) => n.chain === chain);
           const showings = mine.reduce((n, s) => n + s.entries.length, 0);
           const errors = windowChainErrors[chain] || [];
+          // Venue count, not schedule count: a chain that matched theaters but
+          // returned nothing is "no showings", not "no theaters in range".
+          const venues = chain === "other" ? serpApiSchedules.length : (nativeVenueCounts[chain] ?? mine.length);
           return {
             chain,
             status: showings > 0 ? "ok"
               : errors.length > 0 ? "failed"
-              : mine.length === 0 ? "no-theaters"
+              : venues === 0 ? "no-theaters"
               : "no-showings",
-            theaters: mine.length,
+            theaters: venues,
             showings,
             detail: errors[0] || null,
           };
