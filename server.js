@@ -720,13 +720,32 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
   // Validation and geocoding above still answer with a normal JSON 400,
   // deliberately: those fail before any of this runs, and a 400 carrying a
   // real explanation beats an SSE stream that opens only to say it can't.
+  // ---- Abandoned-search handling (v5.9.6) ----
+  // Nothing used to notice when the browser went away. The frontend closes its
+  // EventSource on a new search, so the OLD search looked stopped -- but the
+  // server ran it to completion regardless: every chain fetch, every
+  // createOrder, every proxy poll. That isn't only waste. Cloudflare's Regal
+  // limit is per-IP and time-windowed, so a ghost search draws from the same
+  // ~3-POST budget the new one needs; re-running an impatient search halved
+  // its own chances.
+  //
+  // 'close' also fires on a normal finish, so the writableEnded check is what
+  // separates "client left" from "we're done".
+  let aborted = false;
+  req.on("close", () => {
+    if (res.writableEnded) return;
+    aborted = true;
+    console.error(`Search abandoned by client -- draining queued work for "${movie}".`);
+  });
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
   function sseWrite(eventName, data) {
-    if (!res.writableEnded) res.write(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (aborted || res.writableEnded) return;
+    res.write(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
   try {
@@ -1416,6 +1435,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     const phaseAmc = Promise.all(
       amcDirectTheaters.map((theater) =>
         chainLimit(async () => {
+          if (aborted) return;   // client left -- drain the queue
           const theaterName = theater.name;
           try {
             // No candidateMinutes passed -- this is now the discovery
@@ -1543,6 +1563,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           await Promise.all(
             toPrice.map(({ theaterName, match, startTimeRaw }) =>
               chainLimit(async () => {
+                if (aborted) return;   // client left -- drain the queue
                 try {
                   const priced = await getCinemarkTicketPricing({
                     theaterId: match.theaterId,
@@ -1630,6 +1651,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     const phaseCinemaWest = Promise.all(
       cinemaWestTheaterEntries.map((theater) =>
         chainLimit(async () => {
+          if (aborted) return;   // client left -- drain the queue
           const theaterName = theater.displayName || theater.name;
           const { siteId, sitePath } = cinemaWestResolvedTheaters[theaterName];
           try {
@@ -1728,6 +1750,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         await Promise.all(
           harkinsDirectTheaters.map((theater) =>
             chainLimit(async () => {
+              if (aborted) return;   // client left -- drain the queue
               const theaterName = theater.name;
               const { harkinsId, cinemaId } = theater;
               const theaterPerformances = allPerformances.filter((p) => String(p.theatreId) === String(harkinsId));
@@ -1881,6 +1904,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     const phaseRegency = Promise.all(
       regencyTheaterEntries.map((theater) =>
         chainLimit(async () => {
+          if (aborted) return;   // client left -- drain the queue
           const theaterName = theater.displayName || theater.name;
           const { chain, site, seatsSiteId, locationSlug } = regencyResolvedTheaters[theaterName];
           try {
@@ -2159,6 +2183,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         await Promise.all(
           alamoEntries.map((entry) =>
             chainLimit(async () => {
+              if (aborted) return;   // client left -- drain the queue
               // Pre-check the time window before making a pricing call
               const wouldBeInWindow = buildResultIfWithinWindow({
                 theaterName: entry.cinema.name,
@@ -2218,6 +2243,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         await Promise.all(
           marcusEntries.map((entry) =>
             chainLimit(async () => {
+              if (aborted) return;   // client left -- drain the queue
               const wouldBeInWindow = buildResultIfWithinWindow({
                 theaterName: entry.cinema.name,
                 distanceMin: entry.cinema.distanceMin,
@@ -2791,6 +2817,16 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
   // which error message happens to surface last.
   console.error(`Regal search starting -- active proxy providers: ${configuredProviders().map((p) => p.NAME).join(", ") || "NONE"}`);
 
+  // See the matching block in /api/search. This endpoint matters more: an
+  // abandoned Regal search keeps spending createOrder POSTs against the same
+  // per-IP Cloudflare window the NEXT search needs.
+  let aborted = false;
+  req.on("close", () => {
+    if (res.writableEnded) return;
+    aborted = true;
+    console.error(`Regal search abandoned by client -- draining queued work for "${movie}".`);
+  });
+
   if (!movie || !radiusMin || !deadline) {
     return res.status(400).json({ error: "movie, radiusMin, and deadline are required" });
   }
@@ -2947,7 +2983,8 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     res.flushHeaders();
 
     function sseWrite(eventName, data) {
-      if (!res.writableEnded) res.write(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`);
+      if (aborted || res.writableEnded) return;
+      res.write(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`);
     }
 
     let regalScrapeDoCallsUsed = 0;
@@ -2966,6 +3003,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       await Promise.all(
         uniqueRegalTheaters.map((theater) =>
           regalPriceLimit(async () => {
+            if (aborted) return;   // client left -- drain the queue
             const theaterName = theater.name;
             const cinemaCode = theater.code;
             try {
@@ -3040,6 +3078,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
 
               const pricedPerformanceIds = new Set();
               await getRegalPricedShowtimes({
+                isAborted: () => aborted,
                 cinemaCode,
                 movieTitle: movie,
                 dateISO: searchDateISO,
