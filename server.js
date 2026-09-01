@@ -3357,7 +3357,12 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
                 theater: { name: REGAL_CA_NAME_BY_CODE[t.code] || t.name, distanceMin: t.distanceMin },
                 entries: perfs.map((p) => ({
                   movieName: p.movieName,
-                  time: p.showTime,
+                  // slice(0,5): showTime is "HH:MM:SS" and parseGoogleTime only
+                  // accepts "HH:MM" or "H:MMam". Passing the seconds made it
+                  // return null for EVERY Regal showing, so 62 of them were
+                  // dropped before the window filter ever ran -- the exact
+                  // failure mode parseGoogleTime's own comment describes.
+                  time: (p.showTime || "").slice(0, 5),
                   format: p.format,
                   // Regal pricing needs a cart per showing; far too expensive
                   // to do for every movie playing. Titles and times are what
@@ -3404,7 +3409,8 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
                 theater: { name: t.name, distanceMin: t.distanceMin },
                 entries: sts.map((s) => ({
                   movieName: s.movieName,
-                  time: s.time,
+                  // Same "HH:MM:SS" shape as Regal (split off an ISO datetime).
+                  time: (s.time || "").slice(0, 5),
                   format: s.format,
                   price: s.price ?? null,
                   link: s.purchaseUrl || null,
@@ -3460,15 +3466,28 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
     ]);
 
     nativeSchedules.push(...regalNative, ...amcNative, ...cinemaWestNative);
-    // Regal and AMC theaters come from their own APIs rather than OSM, so match
-    // them back by normalized name to keep SerpApi from fetching them again.
-    for (const { theater } of [...regalNative, ...amcNative]) {
-      nativelyCovered.add(normalizeTheaterName(theater.name));
+
+    // Regal and AMC theaters come from their own APIs, not OSM, so they have to
+    // be matched back to the OSM list by name -- and exact matching does not
+    // work. normalizeTheaterName only collapses whitespace, so Regal's
+    // "Regal Natomas Marketplace" never equalled OSM's "Regal Natomas
+    // Marketplace Stadium 16", and that theater was fetched natively AND sent
+    // to SerpApi. Confirmed from a real log: it appeared in both lists.
+    //
+    // Containment in either direction handles the screen-count and format
+    // suffixes OSM tends to carry. The length floor stops a short chain word
+    // ("AMC") from swallowing unrelated theaters.
+    const nativeNameKeys = [...regalNative, ...amcNative, ...cinemaWestNative]
+      .map(({ theater }) => normalizeTheaterName(theater.name).toLowerCase())
+      .filter((n) => n.length >= 8);
+
+    function isNativelyCovered(osmName) {
+      if (nativelyCovered.has(osmName)) return true;
+      const key = normalizeTheaterName(osmName).toLowerCase();
+      return nativeNameKeys.some((n) => key.includes(n) || n.includes(key));
     }
 
-    const serpApiTheaters = theatersInRange.filter(
-      (t) => !nativelyCovered.has(t.name) && !nativelyCovered.has(normalizeTheaterName(t.name))
-    );
+    const serpApiTheaters = theatersInRange.filter((t) => !isNativelyCovered(t.name));
     console.error(
       `Window search: ${nativeSchedules.length} theater schedule(s) from chain APIs (free), ` +
       `${serpApiTheaters.length} still going to SerpApi.`
