@@ -1262,6 +1262,62 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 
     // ---- Flatten to individual showings and apply the timing/format filters ----
     const results = [];
+
+    // ---- Per-chain reporting (v5.9.5) ----
+    // Every chain caught and console.error'd its own failures, so nothing ever
+    // reached the person searching. Cinema West's token 403 fires on literally
+    // every search and the UI looked perfectly healthy -- a chain silently
+    // contributing nothing is indistinguishable from a chain with nothing to
+    // contribute. This collects a per-chain outcome and ships it in `done`.
+    //
+    // Only DISCOVERY-level failures land here. A single showing failing to
+    // price is noise; a chain that couldn't be reached at all is the thing
+    // worth telling someone about.
+    const chainErrors = {};
+    function noteChainError(chain, message) {
+      (chainErrors[chain] = chainErrors[chain] || []).push(message);
+    }
+
+    // Theater counts are known from discovery; showing counts are derived from
+    // `results` at the end, since every result already carries its chain.
+    function buildChainReports() {
+      const theatersByChain = {
+        amc: amcDirectTheaters.length,
+        cinemark: cinemarkDirectTheaters.length,
+        cinemawest: Object.keys(cinemaWestResolvedTheaters).length,
+        harkins: harkinsDirectTheaters.length,
+        regency: Object.keys(regencyResolvedTheaters).length,
+        alamo: alamoDirectTheaters.length,
+        marcus: marcusDirectTheaters.length,
+        landmark: landmarkDirectTheaters.length,
+      };
+
+      const showingsByChain = {};
+      for (const r of results) {
+        showingsByChain[r.chain] = (showingsByChain[r.chain] || 0) + 1;
+      }
+
+      return Object.entries(theatersByChain)
+        .filter(([chain]) => wantChain(chain))
+        .map(([chain, theaters]) => {
+          const showings = showingsByChain[chain] || 0;
+          const errors = chainErrors[chain] || [];
+          let status;
+          if (showings > 0) status = "ok";
+          else if (errors.length > 0) status = "failed";
+          else if (theaters === 0) status = "no-theaters";
+          else status = "no-showings";
+          return {
+            chain,
+            status,
+            theaters,
+            showings,
+            // One representative reason -- the full list is in the server log.
+            detail: errors[0] || null,
+          };
+        });
+    }
+
     // Every chain adds showings through here so each one streams the instant
     // it's built, while `results` still accumulates for the end-of-search
     // counts. Emitting unsorted is fine -- the client sorts the merged list
@@ -1399,6 +1455,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
             }
           } catch (err) {
             console.error(`AMC discovery/pricing failed for ${theaterName}:`, err.message);
+            noteChainError("amc", err.message);
           }
         })
       )
@@ -1536,6 +1593,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           );
         } catch (err) {
           console.error("Cinemark showtime discovery failed:", err.message);
+          noteChainError("cinemark", err.message);
         }
       }
     }
@@ -1634,6 +1692,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
             }
           } catch (err) {
             console.error(`Cinema West showtime discovery failed for ${theaterName}:`, err.message);
+            noteChainError("cinemawest", err.message);
           }
         })
       )
@@ -1801,6 +1860,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         );
       } catch (err) {
         console.error(`Harkins showtime discovery failed:`, err.message);
+        noteChainError("harkins", err.message);
       }
     }
     })().catch((err) => console.error("Phase 7 (Harkins) failed:", err.message));
@@ -2070,6 +2130,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
             }
           } catch (err) {
             console.error(`Regency showtime discovery failed for ${theaterName}:`, err.message);
+            noteChainError("regency", err.message);
           }
         })
       )
@@ -2138,6 +2199,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         );
       } catch (err) {
         console.error(`Alamo showtime discovery failed:`, err.message);
+        noteChainError("alamo", err.message);
       }
     }
     })().catch((err) => console.error("Phase 9 (Alamo) failed:", err.message));
@@ -2192,6 +2254,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         );
       } catch (err) {
         console.error(`Marcus showtime discovery failed:`, err.message);
+        noteChainError("marcus", err.message);
       }
     }
     })().catch((err) => console.error("Phase 10 (Marcus) failed:", err.message));
@@ -2257,6 +2320,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         );
       } catch (err) {
         console.error(`Landmark showtime discovery failed:`, err.message);
+        noteChainError("landmark", err.message);
       }
     }
     })().catch((err) => console.error("Phase 11 (Landmark) failed:", err.message));
@@ -2325,6 +2389,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       // break on a no-results search).
       runtimeMinutes: realRuntimeMin,
       runtimeIsEstimate,
+      chainReports: buildChainReports(),
       // Regal's credit usage now lives entirely in /api/search-regal's
       // own response -- this endpoint no longer runs Regal at all, so
       // there's nothing real to report here. Removed rather than left
@@ -2888,6 +2953,12 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     let regalScrapeDoCallsUsed = 0;
     const regalCreditsByProvider = {};
 
+    // Regal reports itself, since it runs in this separate endpoint -- the
+    // frontend merges this into the same per-chain report the other eight
+    // chains produce in /api/search.
+    let regalShowings = 0;
+    const regalErrors = [];
+
     // Per-request limiter so stale tasks from a previous search (e.g. stuck
     // waiting on byparr timeouts) don't bleed into this search's theater list.
     const regalPriceLimit = pLimit(3);
@@ -2997,7 +3068,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
                       feeStatus: "estimated",
                     },
                   });
-                  if (built) sseWrite("result", built);
+                  if (built) { regalShowings++; sseWrite("result", built); }
                 },
               });
               // Emit unpriced fallbacks for any performances that didn't get
@@ -3032,6 +3103,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               } // end !usedAtomPath
             } catch (err) {
               console.error(`Regal pricing failed for ${theater.name}:`, err.message);
+              regalErrors.push(err.message);
             }
           })
         )
@@ -3040,7 +3112,20 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       console.error("Regal search failed:", err);
     }
 
-    sseWrite("done", { movie, searchDate: searchDateISO });
+    sseWrite("done", {
+      movie,
+      searchDate: searchDateISO,
+      chainReports: [{
+        chain: "regal",
+        status: regalShowings > 0 ? "ok"
+          : regalErrors.length > 0 ? "failed"
+          : uniqueRegalTheaters.length === 0 ? "no-theaters"
+          : "no-showings",
+        theaters: uniqueRegalTheaters.length,
+        showings: regalShowings,
+        detail: regalErrors[0] || null,
+      }],
+    });
     res.end();
   } catch (err) {
     console.error("Regal search-regal outer error:", err);

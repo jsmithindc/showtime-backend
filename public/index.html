@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.9.4</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.9.5</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1046,6 +1046,7 @@
     const searchResults = [];
     const regalResults = [];
     let searchMeta = {};
+    let regalChainReports = [];
 
     function renderMerged() {
       // Don't paint an empty state while the search is still running. With
@@ -1077,6 +1078,7 @@
         ...searchMeta,
         results: merged.slice(0, cap),
         matchingShowings: searchMeta.matchingShowings ?? merged.length,
+        chainReports: [...(searchMeta.chainReports || []), ...regalChainReports],
         // `|| {}` matters on the first render: lastRenderOpts starts as null,
         // and renderResults' `opts = {}` default only fills in for undefined.
         // The old code sidestepped this by calling renderResults(data) with no
@@ -1143,7 +1145,13 @@
         }
       });
 
-      regalEs.addEventListener('done', () => {
+      regalEs.addEventListener('done', (e) => {
+        // Regal reports itself from its own endpoint; merge it alongside the
+        // eight chains /api/search reports so the UI shows one combined list.
+        try {
+          const d = JSON.parse(e.data);
+          if (d.chainReports) regalChainReports = d.chainReports;
+        } catch (err) {}
         // timingDone is set once in the finally below, after BOTH streams are
         // finished -- setting it here would stop the clock while /api/search
         // was still delivering results.
@@ -1498,6 +1506,49 @@
     // so naming it told people nothing useful about how much longer to wait,
     // and risked implying the rest was already final. All the note needs to say
     // is that the list isn't finished yet.
+    // Per-chain outcome. Every chain used to swallow its own failures into the
+    // server log, so a chain that was completely broken looked exactly like a
+    // chain with nothing playing. Collapsed by default -- it only needs to be
+    // glanceable, and the summary line says whether anything went wrong.
+    if (Array.isArray(data.chainReports) && data.chainReports.length > 0) {
+      const NAMES = {
+        amc: 'AMC', regal: 'Regal', cinemark: 'Cinemark', cinemawest: 'Cinema West',
+        harkins: 'Harkins', regency: 'Regency', alamo: 'Alamo Drafthouse',
+        marcus: 'Marcus', landmark: 'Landmark',
+      };
+      const rows = data.chainReports.map((c) => {
+        const name = NAMES[c.chain] || c.chain;
+        let text, color;
+        if (c.status === 'ok') {
+          text = `${c.showings} showing${c.showings === 1 ? '' : 's'} from ${c.theaters} theater${c.theaters === 1 ? '' : 's'}`;
+          color = 'var(--ink)';
+        } else if (c.status === 'failed') {
+          text = `search failed${c.detail ? ' -- ' + c.detail : ''}`;
+          color = '#d98b7a';
+        } else if (c.status === 'no-theaters') {
+          text = 'no theaters in range';
+          color = 'var(--ink-dim)';
+        } else {
+          text = `${c.theaters} theater${c.theaters === 1 ? '' : 's'} in range, nothing matching`;
+          color = 'var(--ink-dim)';
+        }
+        return `<div style="display:flex; gap:10px; padding:3px 0;">
+            <span style="min-width:110px; color:var(--ink-dim);">${name}</span>
+            <span style="color:${color};">${text}</span>
+          </div>`;
+      }).join('');
+
+      const failed = data.chainReports.filter((c) => c.status === 'failed').length;
+      const summary = failed > 0
+        ? `Chain report -- ${failed} chain${failed === 1 ? '' : 's'} failed`
+        : 'Chain report';
+
+      banners.push(`<details style="margin-top:8px; font-size:12px; color:var(--ink-dim);">
+          <summary style="cursor:pointer; ${failed > 0 ? 'color:#d98b7a;' : ''}">${summary}</summary>
+          <div style="margin-top:8px; font-family:ui-monospace,Menlo,monospace; line-height:1.5;">${rows}</div>
+        </details>`);
+    }
+
     if (searchStillChecking || regalStillChecking) {
       banners.push(`<div class="banner" style="margin-top:8px; font-size:12px; color:#8a8478;">More results still coming in...</div>`);
     }
