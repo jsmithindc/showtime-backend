@@ -505,7 +505,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.5.0</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.5.1</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1717,8 +1717,28 @@
   // specifically for re-sorting after Regal's results merge in
   // separately, since the merged array isn't re-sorted server-side.
   function effectivePriceForSorting(r) {
-    if (sortByDiscountPrice && r.amcStubsDiscountPriceOnlineHigh != null) return r.amcStubsDiscountPriceOnlineHigh;
-    if (sortByDiscountPrice && r.regencyTuesdayPrice != null) return r.regencyTuesdayPrice;
+    // The two toggles COMPOSE -- they aren't alternatives. The discount toggle
+    // used to win outright and always return the ONLINE discounted price, so
+    // with "base only" + "discounts included" the list was ordered by a
+    // fee-inclusive number while every card displayed the fee-free one. Cards
+    // show both an In-person and an Online discounted figure; sorting has to
+    // pick whichever matches the price mode currently on screen.
+    if (sortByDiscountPrice) {
+      if (showBasePriceOnly && r.amcStubsDiscountPriceInPersonHigh != null) {
+        return r.amcStubsDiscountPriceInPersonHigh;
+      }
+      if (!showBasePriceOnly && r.amcStubsDiscountPriceOnlineHigh != null) {
+        return r.amcStubsDiscountPriceOnlineHigh;
+      }
+      // Either variant, whichever exists, rather than falling through to the
+      // undiscounted price and misplacing the row entirely.
+      const anyDiscount = showBasePriceOnly
+        ? r.amcStubsDiscountPriceOnlineHigh
+        : r.amcStubsDiscountPriceInPersonHigh;
+      if (anyDiscount != null) return anyDiscount;
+      // A flat Tuesday rate is the same price either way -- no venue variants.
+      if (r.regencyTuesdayPrice != null) return r.regencyTuesdayPrice;
+    }
     if (showBasePriceOnly && r.priceBeforeFee != null) return r.priceBeforeFee;
     return r.price;
   }
