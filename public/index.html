@@ -416,11 +416,16 @@
     line-height: 1.55;
   }
 
-  /* Film title, ratings and poster travel together as the card's head in
-     window mode -- the poster is identity, so it belongs beside the title
-     rather than floating loose in the body. */
-  .film-head { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 6px; }
-  .film-head-text { flex: 1; min-width: 0; }
+  /* The poster is its own full-height column rather than sitting inside the
+     card head. Beside the title alone it left a band of dead space to its
+     right, since a 2:3 poster is far taller than a title plus a ratings row --
+     as a column it runs the height of the card and the text uses the width. */
+  .poster-col {
+    flex: none;
+    display: flex;
+    align-items: center;
+    padding: 12px 0 12px 14px;
+  }
 
   .poster {
     display: block;
@@ -429,13 +434,21 @@
     background: var(--marquee-3);
     object-fit: cover;
   }
-  .poster-thumb { width: 46px; aspect-ratio: 2 / 3; }
-  /* Movie mode shows one film for the whole search, so it can afford a larger
-     image beside the summary. */
-  .poster-hero { width: 78px; aspect-ratio: 2 / 3; }
+  /* Sized to actually read as artwork rather than a favicon. At 46px a poster
+     was decoration; at 76px the title and faces are legible while scanning. */
+  .poster-thumb { width: 76px; aspect-ratio: 2 / 3; }
+  /* Movie mode shows ONE film for the whole search, so its poster carries the
+     header and can be larger still. */
+  .poster-hero { width: 132px; aspect-ratio: 2 / 3; }
 
-  .summary-head { display: flex; gap: 12px; align-items: flex-start; margin-top: 8px; }
+  .summary-head { display: flex; gap: 14px; align-items: flex-start; margin-top: 10px; }
   .summary-head .ratings { margin-bottom: 0; }
+
+  /* Narrow screens: keep the poster meaningful but give the text room. */
+  @media (max-width: 480px) {
+    .poster-thumb { width: 60px; }
+    .poster-hero { width: 104px; }
+  }
 
   .ratings { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 6px; }
   .rating {
@@ -526,7 +539,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.6.0</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.6.2</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1645,14 +1658,11 @@
           ${priceHtml}
           ${isBest ? '<span class="best-tag">Cheapest</span>' : ''}
         </div>
+        ${opts.showMovieName && r.ratings && r.ratings.poster
+          ? `<div class="poster-col">${posterHtml(r.ratings, r.movieName)}</div>` : ''}
         <div class="card-body">
-          ${opts.showMovieName ? `<div class="film-head">
-            ${posterHtml(r.ratings, r.movieName)}
-            <div class="film-head-text">
-              <div class="movie-name">${escapeHtml(r.movieName)}${r.runtimeMinutes ? ` <span class="runtime">(${r.runtimeMinutes} min)</span>` : ''}</div>
-              ${ratingsHtml(r.ratings)}
-            </div>
-          </div>` : ''}
+          ${opts.showMovieName ? `<div class="movie-name">${escapeHtml(r.movieName)}${r.runtimeMinutes ? ` <span class="runtime">(${r.runtimeMinutes} min)</span>` : ''}</div>
+          ${ratingsHtml(r.ratings)}` : ''}
           <div class="card-top">
             <span class="theater-name">${escapeHtml(r.theaterName)}</span>
             <span class="dist">${r.distanceMin} min away</span>
