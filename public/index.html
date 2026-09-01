@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.0.1</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.0.2</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1651,8 +1651,11 @@
       ? `<b>${results.length}</b> of <b>${totalFound}</b> showings`
       : `<b>${results.length}</b> showing${results.length === 1 ? '' : 's'}`;
 
+    // "that fit", not "movies that fit": this is appended straight after
+    // countLabel, which already ends in "showing(s)" -- the old wording read
+    // "0 of 56 showings movies that fit between 5:00 PM and 11:00 PM".
     const subjectLabel = opts.showMovieName
-      ? `movies that fit between <b>${fmtTime24to12(data.availableFrom)}</b> and <b>${fmtTime24to12(data.availableUntil)}</b>`
+      ? `that fit between <b>${fmtTime24to12(data.availableFrom)}</b> and <b>${fmtTime24to12(data.availableUntil)}</b>`
       : `of <b>${data.movie}</b>`;
 
     // Only meaningful for a single-movie search -- window-search mode

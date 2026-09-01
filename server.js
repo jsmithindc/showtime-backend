@@ -3513,11 +3513,11 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
               location: resolvedLocation,
               dateISO: searchDateISO,
             });
-            return { theater, entries, error: null };
+            return { chain: "other", theater, entries, error: null };
           } catch (err) {
             console.error(`SerpApi lookup failed for ${theater.name}:`, err.message);
             noteWindowChainError("other", err.message);
-            return { theater, entries: [], error: err.message };
+            return { chain: "other", theater, entries: [], error: err.message };
           }
         })
       )
@@ -3546,38 +3546,30 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
       ),
     ];
 
-    // Any Cinemark theater in range with a known slug, to try first.
-    let cinemarkSlugForRuntimes = null;
-    for (const { theater } of perTheaterSchedules) {
-      const slug = CINEMARK_THEATER_SLUGS[theater.name];
-      if (slug) {
-        cinemarkSlugForRuntimes = slug;
-        break;
-      }
-    }
+    // Same free-source chain the two search endpoints use (v5.9.4): Cinemark's
+    // theater page, then Harkins, then SerpApi. This mode kept its own older
+    // version that only consulted Cinemark when a matched theater happened to
+    // have an entry in CINEMARK_THEATER_SLUGS -- and once Cinemark theaters
+    // stopped coming back at all (their SerpApi fetches 429), that condition
+    // was never true, so every title fell through to SerpApi and 429'd. This
+    // mode has the MOST titles to resolve, so it was the biggest quota burner
+    // in the app while getting the least from it.
+    //
+    // Built once rather than per title: it resolves the nearest Cinemark slug
+    // from the static theater list, which doesn't change between titles.
+    const windowRuntimeSource = makeRuntimeSource({ originLat, originLng, radiusMin });
 
     const runtimeByTitle = {};
     await Promise.all(
       uniqueMovieTitles.map((title) =>
         priceLimit(async () => {
-          if (cinemarkSlugForRuntimes) {
-            try {
-              const cinemarkRuntime = await getRuntimeForMovieAtTheater(cinemarkSlugForRuntimes, title);
-              if (cinemarkRuntime) {
-                runtimeByTitle[title] = cinemarkRuntime;
-                return;
-              }
-            } catch (err) {
-              console.error(`Cinemark runtime lookup failed for "${title}":`, err.message);
-            }
-          }
-          runtimeByTitle[title] = await getRuntimeMinutes(title, RUNTIME_MIN, getHarkinsRuntimeForMovie);
+          runtimeByTitle[title] = await getRuntimeMinutes(title, RUNTIME_MIN, windowRuntimeSource);
         })
       )
     );
 
     const results = [];
-    for (const { theater, entries } of perTheaterSchedules) {
+    for (const { theater, entries, chain } of perTheaterSchedules) {
       for (const entry of entries) {
         if (!entry.movieName) continue;
         const startMin = parseGoogleTime(entry.time);
@@ -3602,6 +3594,13 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
           runtimeMinutes: runtime,
           theaterName: theater.name,
           distanceMin: theater.distanceMin,
+          // Required, not decorative: renderResults filters on
+          // activeResultChains.has(r.chain), and a result with no chain fails
+          // that test forever -- allChains does .filter(Boolean), so undefined
+          // never enters the set that the filter checks against. Every window
+          // result was being dropped at render ("0 of 56 showings"). Latent
+          // until this mode started producing results again.
+          chain: chain || "other",
           format: entry.format,
           startTime: entry.time,
           price: entry.price,
