@@ -3331,6 +3331,15 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
     // title, Cinemark needs a movieId per title), so enumerating a theater
     // means N calls or new page parsing. They still come through the SerpApi
     // path below, and are the obvious next step.
+    // Same 1.5x net /api/search-regal uses for its own theater discovery. It is
+    // deliberately over-inclusive: the minutes figure is a straight-line
+    // estimate, not a routed drive time, so a theater the formula puts at 35
+    // minutes may well be inside a real 30-minute drive. Applied here so the
+    // two modes agree -- window-search filtering strictly while the movie
+    // search used the wider net meant the same radius returned different
+    // theaters depending on which mode you were in.
+    const CHAIN_DISCOVERY_NET = 1.5;
+
     const nativeSchedules = [];
     const nativelyCovered = new Set();   // theater names SerpApi should skip
     const windowChainErrors = {};
@@ -3346,7 +3355,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
           const allRegal = await getRegalTheaters();
           const inRange = allRegal
             .map((t) => ({ ...t, distanceMin: estimatedMinutesAway(originLat, originLng, t.lat, t.lng) }))
-            .filter((t) => t.distanceMin <= Number(radiusMin));
+            .filter((t) => t.distanceMin <= Number(radiusMin) * CHAIN_DISCOVERY_NET);
           await Promise.all(inRange.map((t) => priceLimit(async () => {
             try {
               const costTracker = { total: 0, byProvider: {} };
@@ -3397,7 +3406,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
                 if (seen.has(t.id)) continue;
                 seen.add(t.id);
                 const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
-                if (dMin <= Number(radiusMin)) here.push({ ...t, distanceMin: dMin });
+                if (dMin <= Number(radiusMin) * CHAIN_DISCOVERY_NET) here.push({ ...t, distanceMin: dMin });
               }
             } catch (err) { noteWindowChainError("amc", err.message); }
           }
