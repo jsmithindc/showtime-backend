@@ -48,7 +48,7 @@ const { matchesMovie } = require("./lib/priceAdapters/serpapi");
 const CINEMARK_THEATER_SLUGS = require("./lib/cinemark-theater-slugs");
 const { getRuntimeForMovieAtTheater, getCinemarkMovieIdForTitle } = require("./lib/cinemark-runtime-scraper");
 const { geocodeForward } = require("./lib/geocode");
-const { getRuntimeMinutes } = require("./lib/movie-runtime");
+const { getRuntimeMinutes, getRuntimeInfo } = require("./lib/movie-runtime");
 const { configuredProviders } = require("./lib/proxyProviders");
 
 const { getStingerInfo, getInTheatersList } = require("./lib/mediaStinger");
@@ -142,6 +142,50 @@ app.use(express.static("public"));
 // wire in a free runtime lookup (e.g. OMDb's free tier) if you want this
 // to stop being a manual step.
 const RUNTIME_MIN = 128;
+
+// Free runtime sources, tried in order before spending a SerpApi call.
+//
+// Both search endpoints previously passed only the Harkins catalog. Harkins
+// has no theaters in large parts of the country, so wherever it doesn't
+// operate that source returns nothing, SerpApi answers 429 once its quota is
+// gone, and every movie silently gets RUNTIME_MIN -- which then drives the
+// deadline filter. Cinemark theater pages carry the distributor's own runtime
+// ("PG-13 2 hr 25 min") right next to each title, and this project already had
+// a scraper for it: getRuntimeForMovieAtTheater. It was only ever wired into
+// /api/window-search, never into the two endpoints that actually filter
+// showtimes against the number.
+//
+// The slug comes from the static nationwide theater list filtered by distance
+// -- no network -- so this can be resolved before discovery runs and doesn't
+// give back the head start of kicking the lookup off early.
+function makeRuntimeSource({ originLat, originLng, radiusMin }) {
+  let cinemarkSlug = null;
+  try {
+    const allCinemark = require("./lib/cinemark-theaters");
+    const nearest = allCinemark
+      .map((t) => ({ slug: t.slug, dMin: estimatedMinutesAway(originLat, originLng, t.lat, t.lng) }))
+      .filter((t) => t.slug && t.dMin <= Number(radiusMin) * 1.15)
+      .sort((a, b) => a.dMin - b.dMin)[0];
+    cinemarkSlug = nearest ? nearest.slug : null;
+  } catch {
+    // Theater list not generated yet -- fall through to the other sources.
+  }
+
+  return async function runtimeFromFreeSources(movieTitle) {
+    if (cinemarkSlug) {
+      try {
+        const fromCinemark = await getRuntimeForMovieAtTheater(cinemarkSlug, movieTitle);
+        if (fromCinemark != null) {
+          console.error(`Runtime for "${movieTitle}": ${fromCinemark} min from Cinemark (${cinemarkSlug}) -- real data, no SerpApi call.`);
+          return fromCinemark;
+        }
+      } catch (err) {
+        console.error(`Runtime: Cinemark lookup failed for "${movieTitle}" via ${cinemarkSlug}:`, err.message);
+      }
+    }
+    return getHarkinsRuntimeForMovie(movieTitle);
+  };
+}
 // Was a single fixed number (20, then briefly 30 after one real
 // observation at AMC Norwalk 20). Changed to a range instead of another
 // single guess -- trailer time genuinely varies by theater and we don't
@@ -697,7 +741,11 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // fully finished, adding its whole latency to the front of every search
     // in series. Now it overlaps discovery and costs nothing unless it's the
     // last thing outstanding.
-    const runtimePromise = getRuntimeMinutes(movie, RUNTIME_MIN, getHarkinsRuntimeForMovie);
+    const runtimePromise = getRuntimeInfo(
+      movie,
+      RUNTIME_MIN,
+      makeRuntimeSource({ originLat, originLng, radiusMin })
+    );
 
     function wantChain(name) {
       return !wantedChains || wantedChains.includes(name);
@@ -1039,7 +1087,14 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // This also quietly improves the existing deadline filter's
     // accuracy -- it previously always assumed 128 minutes regardless
     // of the real movie's length.
-    const realRuntimeMin = await runtimePromise;
+    const { minutes: realRuntimeMin, isEstimate: runtimeIsEstimate } = await runtimePromise;
+    if (runtimeIsEstimate) {
+      console.error(
+        `Runtime for "${movie}": NO real source answered -- using the ${RUNTIME_MIN} min fallback. ` +
+        `Showtimes are being filtered against a guess, so the deadline cutoff may be wrong. ` +
+        `Add an entry to lib/movie-runtime-overrides.js if this title keeps coming up.`
+      );
+    }
 
     function formatEndTime(startTimeRaw, runtimeMinutes) {
       // runtimeMinutes here already includes the trailer buffer -- the
@@ -1260,6 +1315,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       theatersInRange: theatersInRange.length,
       serpApiCallsUsed: theatersToSearch.length,
       runtimeMinutes: realRuntimeMin,
+      runtimeIsEstimate,
       ...(timeWindowWarning ? { warning: timeWindowWarning } : {}),
     });
 
@@ -2268,6 +2324,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       // results is empty (pulling it from results[0] would silently
       // break on a no-results search).
       runtimeMinutes: realRuntimeMin,
+      runtimeIsEstimate,
       // Regal's credit usage now lives entirely in /api/search-regal's
       // own response -- this endpoint no longer runs Regal at all, so
       // there's nothing real to report here. Removed rather than left
@@ -2703,7 +2760,11 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     // Same as /api/search: start the runtime lookup alongside discovery rather
     // than after it. Here it also used to sit between the handler starting and
     // res.flushHeaders(), so nothing could stream until it came back.
-    const runtimePromise = getRuntimeMinutes(movie, RUNTIME_MIN, getHarkinsRuntimeForMovie);
+    const runtimePromise = getRuntimeInfo(
+      movie,
+      RUNTIME_MIN,
+      makeRuntimeSource({ originLat, originLng, radiusMin })
+    );
 
     const radiusMeters = minutesToMeters(Number(radiusMin));
     const nearbyTheaters = await findNearbyTheaters({ lat: originLat, lng: originLng, radiusMeters });
@@ -2775,7 +2836,14 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       return true;
     });
 
-    const realRuntimeMin = await runtimePromise;
+    const { minutes: realRuntimeMin, isEstimate: runtimeIsEstimate } = await runtimePromise;
+    if (runtimeIsEstimate) {
+      console.error(
+        `Runtime for "${movie}": NO real source answered -- using the ${RUNTIME_MIN} min fallback. ` +
+        `Showtimes are being filtered against a guess, so the deadline cutoff may be wrong. ` +
+        `Add an entry to lib/movie-runtime-overrides.js if this title keeps coming up.`
+      );
+    }
 
     function regalResultIfWithinWindow({ theaterName, distanceMin, startTimeRaw, format, price, bookingLink, priceExtras, performanceId, movieId: perfMovieId, cinemaCode: perfCinemaCode, priceSource: overridePriceSource }) {
       const fmt = format || "Standard";

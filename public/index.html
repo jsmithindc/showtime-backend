@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.9.3</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.9.4</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1556,8 +1556,15 @@
     // Only meaningful for a single-movie search -- window-search mode
     // mixes many different movies with their own separate runtimes, so
     // there's no one number to show there.
+    // When no real runtime source answered, the number is a hardcoded guess --
+    // and it's the number every "Done by ..." time and the whole deadline
+    // filter are computed from. Showing it identically to a real runtime made
+    // a guess look like fact, which is the wrong way round for the one thing
+    // this app promises. Say so, and explain what it affects.
     const runtimeLabel = !opts.showMovieName && data.runtimeMinutes
-      ? ` <span style="color:var(--ink-dim); font-weight:400;">(${fmtRuntime(data.runtimeMinutes)})</span>`
+      ? (data.runtimeIsEstimate
+          ? ` <span style="color:var(--ink-dim); font-weight:400;" title="No runtime data was available for this film, so end times and the deadline filter use a ${fmtRuntime(data.runtimeMinutes)} assumption. Actual end times may be later.">(~${fmtRuntime(data.runtimeMinutes)}, estimated)</span>`
+          : ` <span style="color:var(--ink-dim); font-weight:400;">(${fmtRuntime(data.runtimeMinutes)})</span>`)
       : '';
 
     const dateLabel = (() => {
