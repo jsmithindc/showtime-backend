@@ -4,7 +4,7 @@ const { findNearbyTheaters } = require("./lib/theaters-overpass");
 const { estimatedMinutesAway, minutesToMeters } = require("./lib/distance");
 const { getPricedShowtimes, getTheaterSchedule } = require("./lib/priceAdapters/serpapi");
 const { resolveCanonicalLocation } = require("./lib/serpapi-location");
-const { getPricedShowtimes: getRegalPricedShowtimes, getShowtimesForTheater: getRegalShowtimesForTheater, getCachedShowtimesForTheater: getCachedRegalShowtimes } = require("./lib/priceAdapters/regal-scrapedo");
+const { getPricedShowtimes: getRegalPricedShowtimes, getShowtimesForTheater: getRegalShowtimesForTheater, getCachedShowtimesForTheater: getCachedRegalShowtimes, makeCartProvider: makeRegalCartProvider } = require("./lib/priceAdapters/regal-scrapedo");
 const { getAtomShowtimes, getAtomCheckoutPricing } = require("./lib/priceAdapters/atom-tickets");
 const REGAL_CINEMA_MAP = require("./lib/regal-cinema-map");
 const { getRegalTheaters } = require("./lib/regal-theaters");
@@ -3056,6 +3056,25 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     let regalShowings = 0;
     const regalErrors = [];
 
+    // ONE cart for the entire search, shared by every theater.
+    //
+    // The cart turns out not to be theater-scoped: confirmed live, a cart
+    // opened against cinema 1308 priced performances at 1315 and 1943 too, with
+    // genuinely different prices. Sharing it makes a search cost a single
+    // createOrder POST no matter how many Regal theaters are in range.
+    //
+    // That's the difference between working and not in a dense market. Denver
+    // has five Regal theaters nearby; at one cart per theater that was five
+    // POSTs against a ~3-POST Cloudflare window, so every price failed, each
+    // fell through to Bright Data's 60s timeout, and the search took 127s and
+    // returned no Regal prices at all.
+    //
+    // Any theater's code works for opening it, so the first one is used.
+    const regalSearchCart = makeRegalCartProvider({
+      cinemaCode: uniqueRegalTheaters[0].code,
+      costTracker: { total: 0, byProvider: {} },
+    });
+
     // Per-request limiter so stale tasks from a previous search (e.g. stuck
     // waiting on byparr timeouts) don't bleed into this search's theater list.
     const regalPriceLimit = pLimit(3);
@@ -3139,6 +3158,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               const pricedPerformanceIds = new Set();
               await getRegalPricedShowtimes({
                 isAborted: () => aborted,
+                cart: regalSearchCart,
                 cinemaCode,
                 movieTitle: movie,
                 dateISO: searchDateISO,
