@@ -416,7 +416,16 @@
     line-height: 1.55;
   }
 
-  /* Window-search cards answer "what can I watch", so the FILM is the subject
+  .ratings { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 6px; }
+  .rating {
+    font-size: 12px;
+    color: var(--ink-dim);
+    white-space: nowrap;
+    cursor: help;
+  }
+
+  /* Window-search cards answer "what can I watch"
+, so the FILM is the subject
      and the theater is context. Both used to render at font-weight 600, one
      directly above the other, which made an unfamiliar film and an unfamiliar
      theater indistinguishable. The film now leads the card; the theater drops
@@ -496,7 +505,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.1.0</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.1.1</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -914,6 +923,27 @@
   // Both movie endpoints return {title, runtimeMinutes}. Older deploys sent
   // plain strings, and this runs in a browser that may have cached the old
   // page against a new server (or the reverse), so accept either shape.
+  // Compact score row. Each source is shown on its own native scale rather
+  // than normalised to one number -- an IMDb 7.8/10 and an RT 91% mean
+  // different things (user average vs share of positive reviews) and merging
+  // them would invent a figure none of them reports.
+  function ratingsHtml(r) {
+    if (!r) return '';
+    const parts = [];
+    if (r.rottenTomatoes != null) {
+      const fresh = r.rottenTomatoes >= 60;
+      parts.push(`<span class="rating" title="Rotten Tomatoes -- share of critics rating it positively">${fresh ? '🍅' : '🫗'} ${r.rottenTomatoes}%</span>`);
+    }
+    if (r.metacritic != null) {
+      parts.push(`<span class="rating" title="Metacritic -- weighted average of critic scores, out of 100">Ⓜ ${r.metacritic}</span>`);
+    }
+    if (r.imdb != null) {
+      parts.push(`<span class="rating" title="IMDb -- average user rating, out of 10">★ ${r.imdb}</span>`);
+    }
+    if (!parts.length) return '';
+    return `<div class="ratings">${parts.join('')}</div>`;
+  }
+
   function movieTitleOf(m) { return typeof m === 'string' ? m : (m && m.title) || ''; }
   function movieOptionHtml(m) {
     const title = movieTitleOf(m);
@@ -1570,6 +1600,7 @@
         </div>
         <div class="card-body">
           ${opts.showMovieName ? `<div class="movie-name">${escapeHtml(r.movieName)}${r.runtimeMinutes ? ` <span class="runtime">(${r.runtimeMinutes} min)</span>` : ''}</div>` : ''}
+          ${opts.showMovieName ? ratingsHtml(r.ratings) : ''}
           <div class="card-top">
             <span class="theater-name">${escapeHtml(r.theaterName)}</span>
             <span class="dist">${r.distanceMin} min away</span>
@@ -1864,6 +1895,13 @@
     // only worth showing at all when MediaStinger actually had info,
     // since "we don't know" isn't useful to surface every time.
     const stinger = data.mediaStinger;
+    // Movie mode has ONE film, so its scores go in the summary rather than
+    // being repeated identically on every card.
+    if (!opts.showMovieName && data.ratings) {
+      const row = ratingsHtml(data.ratings);
+      if (row) els.statusLine.innerHTML += row;
+    }
+
     if (!opts.showMovieName && stinger && stinger.hasInfo) {
       const verdictHtml = stinger.verdict === 'STAY'
         ? `Is there something worth watching during or after the credits? <span style="color:#2a7a2a; font-weight:700;">Yes, you should STAY</span>`

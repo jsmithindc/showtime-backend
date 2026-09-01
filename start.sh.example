@@ -32,6 +32,13 @@ export AMC_VENDOR_KEY="paste-your-real-key-here"
 # hosted/datacenter IPs). Free tier: 3000 calls/day, no billing.
 # Sign up at myprojects.geoapify.com to get a key.
 export GEOAPIFY_API_KEY="paste-your-real-key-here"
+# Movie ratings: IMDb, Rotten Tomatoes and Metacritic in ONE lookup. None of the
+# three has a free public API of its own, and OMDb aggregates all of them.
+# Free tier: 1000 requests/day, and results are cached 12h with per-title
+# dedup, so a normal day uses a tiny fraction of that.
+# Get a free key at omdbapi.com/apikey.aspx (email confirmation required).
+# Optional -- with this unset, ratings are simply omitted and nothing breaks.
+export OMDB_API_KEY="paste-your-real-key-here"
 # Marcus Theatres pricing token (Bearer JWT, role CINEMAAPP, email website@injin.com).
 # Capture from ticketing.marcustheatres.com DevTools → Network → any /cms/v2/ request's
 # Authorization header. Token appears long-lived despite 30-min exp claim.

@@ -49,6 +49,7 @@ const CINEMARK_THEATER_SLUGS = require("./lib/cinemark-theater-slugs");
 const { getRuntimeForMovieAtTheater, getCinemarkMovieIdForTitle } = require("./lib/cinemark-runtime-scraper");
 const { geocodeForward } = require("./lib/geocode");
 const { getRuntimeMinutes, getRuntimeInfo } = require("./lib/movie-runtime");
+const { getRatings: getMovieRatings, isConfigured: isRatingsConfigured } = require("./lib/movie-ratings");
 const { configuredProviders } = require("./lib/proxyProviders");
 
 const { getStingerInfo, getInTheatersList } = require("./lib/mediaStinger");
@@ -787,6 +788,9 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       RUNTIME_MIN,
       makeRuntimeSource({ originLat, originLng, radiusMin, dateISO: searchDateISO })
     );
+    // One film, so one lookup -- fired alongside discovery and awaited only at
+    // the end, where it's attached to `done`. Never blocks a result.
+    const ratingsPromise = getMovieRatings(movie).catch(() => null);
 
     function wantChain(name) {
       return !wantedChains || wantedChains.includes(name);
@@ -2437,6 +2441,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       // break on a no-results search).
       runtimeMinutes: realRuntimeMin,
       runtimeIsEstimate,
+      ratings: await ratingsPromise,
       chainReports: buildChainReports(),
       // Regal's credit usage now lives entirely in /api/search-regal's
       // own response -- this endpoint no longer runs Regal at all, so
@@ -3600,11 +3605,21 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
     // from the static theater list, which doesn't change between titles.
     const windowRuntimeSource = makeRuntimeSource({ originLat, originLng, radiusMin, dateISO: searchDateISO });
 
+    // Ratings resolve alongside runtimes, over the same unique-title list, so
+    // a film showing eight times costs one lookup rather than eight. Only when
+    // configured -- with no OMDb key this stays an empty map and cards render
+    // exactly as before.
     const runtimeByTitle = {};
+    const ratingsByTitle = {};
     await Promise.all(
       uniqueMovieTitles.map((title) =>
         priceLimit(async () => {
-          runtimeByTitle[title] = await getRuntimeMinutes(title, RUNTIME_MIN, windowRuntimeSource);
+          const [runtime, ratings] = await Promise.all([
+            getRuntimeMinutes(title, RUNTIME_MIN, windowRuntimeSource),
+            isRatingsConfigured() ? getMovieRatings(title).catch(() => null) : Promise.resolve(null),
+          ]);
+          runtimeByTitle[title] = runtime;
+          if (ratings) ratingsByTitle[title] = ratings;
         })
       )
     );
@@ -3642,6 +3657,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
           // result was being dropped at render ("0 of 56 showings"). Latent
           // until this mode started producing results again.
           chain: chain || "other",
+          ratings: ratingsByTitle[entry.movieName] || null,
           format: entry.format,
           startTime: entry.time,
           price: entry.price,
