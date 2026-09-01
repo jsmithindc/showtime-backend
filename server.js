@@ -790,7 +790,9 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     );
     // One film, so one lookup -- fired alongside discovery and awaited only at
     // the end, where it's attached to `done`. Never blocks a result.
-    const ratingsPromise = getMovieRatings(movie).catch(() => null);
+    // Year from the search date, so OMDb resolves the film now in theaters
+    // rather than a same-titled one from another decade.
+    const ratingsPromise = getMovieRatings(movie, Number(searchDateISO.slice(0, 4))).catch(() => null);
 
     function wantChain(name) {
       return !wantedChains || wantedChains.includes(name);
@@ -3681,7 +3683,9 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
         priceLimit(async () => {
           const [runtime, ratings] = await Promise.all([
             getRuntimeMinutes(title, RUNTIME_MIN, windowRuntimeSource),
-            isRatingsConfigured() ? getMovieRatings(title).catch(() => null) : Promise.resolve(null),
+            isRatingsConfigured()
+              ? getMovieRatings(title, Number(searchDateISO.slice(0, 4))).catch(() => null)
+              : Promise.resolve(null),
           ]);
           runtimeByTitle[title] = runtime;
           if (ratings) ratingsByTitle[title] = ratings;
