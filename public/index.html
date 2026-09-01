@@ -505,7 +505,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.3.0</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.4.0</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -932,7 +932,15 @@
     const parts = [];
     if (r.rottenTomatoes != null) {
       const fresh = r.rottenTomatoes >= 60;
-      parts.push(`<span class="rating" title="Rotten Tomatoes -- share of critics rating it positively">${fresh ? '🍅' : '🫗'} ${r.rottenTomatoes}%</span>`);
+      const cf = r.rtCertifiedFresh ? ' Certified Fresh.' : '';
+      parts.push(`<span class="rating" title="Tomatometer -- share of critics rating it positively.${cf}">${fresh ? '🍅' : '🫗'} ${r.rottenTomatoes}%</span>`);
+    }
+    // Audience score sits next to the critic score rather than replacing it --
+    // they disagree often, and which one you trust is the reader's call.
+    if (r.rtAudience != null) {
+      const liked = r.rtAudience >= 60;
+      const vh = r.rtVerifiedHot ? ' Verified Hot.' : '';
+      parts.push(`<span class="rating" title="Popcornmeter -- share of verified audience ratings that are positive.${vh}">${liked ? '🍿' : '🥤'} ${r.rtAudience}%</span>`);
     }
     if (r.metacritic != null) {
       parts.push(`<span class="rating" title="Metacritic -- weighted average of critic scores, out of 100">Ⓜ ${r.metacritic}</span>`);

@@ -39,6 +39,16 @@ export GEOAPIFY_API_KEY="paste-your-real-key-here"
 # Get a free key at omdbapi.com/apikey.aspx (email confirmation required).
 # Optional -- with this unset, ratings are simply omitted and nothing breaks.
 export OMDB_API_KEY="paste-your-real-key-here"
+# Rotten Tomatoes Tomatometer + Popcornmeter, read from RT's public /m/ pages.
+# OFF unless set to exactly "true". OMDb carries RT only sporadically for films
+# currently in theatres (one of ~20 titles in a live search), RT has no public
+# API, and the RapidAPI wrappers cap their free tier at 5 requests/day.
+# Only /m/{slug} is fetched -- RT's robots.txt disallows /search, so the
+# search-fallback other projects use is deliberately not implemented here.
+# robots.txt allowing a path is not the same as RT's Terms of Use allowing
+# automated collection, which is why this is opt-in. Expect it to break when RT
+# changes their page structure; it fails closed and simply shows no RT score.
+export ENABLE_RT_SCRAPE="true"
 # Marcus Theatres pricing token (Bearer JWT, role CINEMAAPP, email website@injin.com).
 # Capture from ticketing.marcustheatres.com DevTools → Network → any /cms/v2/ request's
 # Authorization header. Token appears long-lived despite 30-min exp claim.
