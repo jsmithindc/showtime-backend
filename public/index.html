@@ -370,6 +370,25 @@
   }
   .theater-name { font-weight: 600; font-size: 15px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+  /* Window-search shows titles and times but no prices -- pricing every film
+     playing tonight would mean a cart per showing. This hands the film to the
+     movie search, which does price it, without retyping anything. */
+  .price-this {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 5px 10px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--marquee);
+    background: var(--gold);
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .price-this:hover { filter: brightness(1.08); }
+  .price-this:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
   /* Search status, not a filter. Sits directly above the format/chain chips,
      which are also small dim rows -- without a distinct surface the two read
      as one undifferentiated block of controls. */
@@ -477,7 +496,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.0.4</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.0.5</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -689,6 +708,45 @@
   }
   els.modeMovieBtn.addEventListener('click', () => setMode('movie'));
   els.modeWindowBtn.addEventListener('click', () => setMode('window'));
+
+  // "Price this film" on a window-search card. Window-search deliberately
+  // doesn't price -- that would need a cart per showing for every film playing
+  // tonight -- so this hands the film to the movie search, which does.
+  //
+  // Delegated from #results because cards are re-rendered on every filter
+  // toggle and re-sort; per-button listeners would be lost each time.
+  els.results.addEventListener('click', (e) => {
+    const btn = e.target.closest('.price-this');
+    if (!btn) return;
+    const title = btn.dataset.movie;
+    if (!title) return;
+
+    // The movie <select> is populated from a discovery call that may not have
+    // run, or may not list a film only playing at one chain. Add it rather
+    // than silently failing to select it.
+    if (![...els.movie.options].some((o) => o.value === title)) {
+      const opt = document.createElement('option');
+      opt.value = title;
+      opt.textContent = title;
+      els.movie.appendChild(opt);
+    }
+    els.movie.value = title;
+
+    // The free-time window's END becomes the movie search's "must end by":
+    // both express the same thing -- the film has to be over by then. Start
+    // time doesn't carry over; the movie search always works forward from now.
+    //
+    // Taken from the rendered response rather than recomputed from the inputs.
+    // There is no availableUntil field -- it's derived from "free from" plus a
+    // duration -- and the inputs may have been edited since these results were
+    // produced. lastRenderData.availableUntil is the window that actually
+    // produced the card being clicked.
+    const windowEnd = lastRenderData && lastRenderData.availableUntil;
+    if (windowEnd) els.deadline.value = windowEnd;
+
+    setMode('movie');
+    runSearch();
+  });
 
   // Restore last-used values so repeat searches don't require retyping
   // everything -- this is a personal local tool, not a shared page.
@@ -1498,6 +1556,7 @@
             <span class="format-badge"${getFormatDescription(r.format) ? ` title="${escapeHtml(getFormatDescription(r.format))}"` : ''}>${escapeHtml(r.format)}</span>
             ${r.ticketTypeName ? `<span class="format-badge" style="opacity:0.75;" title="This chain's own real ticket tier for this exact showing, not a guessed rule">${escapeHtml(r.ticketTypeName)}</span>` : ''}
           </div>
+          ${opts.showMovieName ? `<button type="button" class="price-this" data-movie="${escapeHtml(r.movieName)}">Price this film &rarr;</button>` : ''}
           ${r.bookingLink ? `<a class="card-link" href="${r.bookingLink}" target="_blank" rel="noopener">Check showtime / tickets &rarr;</a>` : ''}
           ${r.priceSource ? `<div class="price-source">Price source: ${escapeHtml(r.priceSource)}</div>` : ''}
         </div>
