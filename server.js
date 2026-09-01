@@ -692,6 +692,13 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // 20.3min is almost certainly driveable within the stated 20min limit.
     const discoveryRadiusMin = Number(radiusMin) * 1.15;
 
+    // Kicked off here, awaited far below where the value is first needed. It
+    // depends on nothing but the title, yet used to run AFTER discovery had
+    // fully finished, adding its whole latency to the front of every search
+    // in series. Now it overlaps discovery and costs nothing unless it's the
+    // last thing outstanding.
+    const runtimePromise = getRuntimeMinutes(movie, RUNTIME_MIN, getHarkinsRuntimeForMovie);
+
     function wantChain(name) {
       return !wantedChains || wantedChains.includes(name);
     }
@@ -1032,7 +1039,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // This also quietly improves the existing deadline filter's
     // accuracy -- it previously always assumed 128 minutes regardless
     // of the real movie's length.
-    const realRuntimeMin = await getRuntimeMinutes(movie, RUNTIME_MIN, getHarkinsRuntimeForMovie);
+    const realRuntimeMin = await runtimePromise;
 
     function formatEndTime(startTimeRaw, runtimeMinutes) {
       // runtimeMinutes here already includes the trailer buffer -- the
@@ -2693,6 +2700,11 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
   const nowMinutes = isToday ? nowMinutesInZone(clientTimestampMs, theaterTimezone) : 0;
 
   try {
+    // Same as /api/search: start the runtime lookup alongside discovery rather
+    // than after it. Here it also used to sit between the handler starting and
+    // res.flushHeaders(), so nothing could stream until it came back.
+    const runtimePromise = getRuntimeMinutes(movie, RUNTIME_MIN, getHarkinsRuntimeForMovie);
+
     const radiusMeters = minutesToMeters(Number(radiusMin));
     const nearbyTheaters = await findNearbyTheaters({ lat: originLat, lng: originLng, radiusMeters });
 
@@ -2763,7 +2775,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       return true;
     });
 
-    const realRuntimeMin = await getRuntimeMinutes(movie, RUNTIME_MIN, getHarkinsRuntimeForMovie);
+    const realRuntimeMin = await runtimePromise;
 
     function regalResultIfWithinWindow({ theaterName, distanceMin, startTimeRaw, format, price, bookingLink, priceExtras, performanceId, movieId: perfMovieId, cinemaCode: perfCinemaCode, priceSource: overridePriceSource }) {
       const fmt = format || "Standard";

@@ -2,3 +2,5 @@ start.sh
 node_modules/
 .overpass-cache.json
 .serpapi-schedule-cache.json
+# Runtime disk cache (lib/disk-cache.js) -- regenerated on demand.
+cache/
