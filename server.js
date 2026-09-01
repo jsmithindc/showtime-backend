@@ -1205,7 +1205,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // counts. Emitting unsorted is fine -- the client sorts the merged list
     // (it already did that for the Regal stream).
     function addResult(built) {
-      addResult(built);
+      results.push(built);
       sseWrite("result", built);
     }
     for (const { theater, entries } of perTheaterResults) {
