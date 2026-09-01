@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.9.0</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.9.1</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -962,7 +962,7 @@
 
     els.searchBtn.disabled = true;
     els.searchBtn.textContent = 'Searching...';
-    els.statusLine.textContent = 'Checking nearby theaters... Full results can take up to a minute.';
+    els.statusLine.textContent = 'Searching nearby theaters...';
 
     // Timing bar
     const timingBar = document.getElementById('timingBar');
@@ -1048,12 +1048,20 @@
     let searchMeta = {};
 
     function renderMerged() {
-      // Nothing to draw until `meta` lands and there's still no result to show.
-      // Without this guard an early render (a stream erroring before meta, say)
-      // paints the empty state built from an empty meta object -- "No showings
-      // of undefined found within your window on ?" -- which then gets
-      // overwritten a moment later. Better to leave the waiting message up.
-      if (!searchMeta.movie && searchResults.length === 0 && regalResults.length === 0) return;
+      // Don't paint an empty state while the search is still running. With
+      // nothing found YET, renderResults draws its "No showings of X found
+      // within your window" message -- which is a statement about a finished
+      // search, and showing it mid-flight told people the search had failed
+      // seconds before results appeared and replaced it. While either stream
+      // is live and nothing has arrived, leave the "Searching..." status up
+      // and draw nothing; the first result, or the last stream finishing,
+      // renders normally.
+      //
+      // This also covers the pre-`meta` case, where an empty searchMeta
+      // rendered as "No showings of undefined ... on ?".
+      const nothingYet = searchResults.length === 0 && regalResults.length === 0;
+      if (nothingYet && (searchStillChecking || regalStillChecking)) return;
+      if (nothingYet && !searchMeta.movie) return;
       const merged = [...searchResults, ...regalResults];
       merged.sort((a, b) => {
         const pa = effectivePriceForSorting(a), pb = effectivePriceForSorting(b);
