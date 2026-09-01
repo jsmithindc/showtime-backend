@@ -2591,14 +2591,21 @@ app.get("/api/popular-movies", async (req, res) => {
       return res.status(503).json({ error: "AMC Mesquite 30 not found", movies: [] });
     }
     const showtimes = await getAmcShowtimesForTheater({ theatreId: mesquite.id, dateISO: todayISO });
+    // runTime rides along on every AMC showing, so the dropdown can show a
+    // real runtime per title without a single extra request -- this endpoint
+    // was already fetching exactly the data that carries it.
     const seen = new Set();
     const movies = [];
     for (const s of showtimes) {
       if (!s.movieName) continue;
-      const key = s.movieName.trim().toLowerCase();
-      if (!seen.has(key)) { seen.add(key); movies.push(s.movieName.trim()); }
+      const title = s.movieName.trim();
+      const key = title.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        movies.push({ title, runtimeMinutes: s.runTime ?? null });
+      }
     }
-    movies.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    movies.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
     res.json({ movies });
   } catch (err) {
     console.error("Popular-movies (AMC Mesquite 30) lookup failed:", err.message);
@@ -2791,8 +2798,20 @@ app.get("/api/movies", async (req, res) => {
       const key = title.trim().toLowerCase();
       if (key && !moviesByKey.has(key)) moviesByKey.set(key, title.trim());
     }
-    const movies = [...moviesByKey.values()].sort((a, b) =>
+    // Same shape as /api/popular-movies so the dropdown renders identically
+    // whichever endpoint filled it. Runtimes come from the AMC catalog, which
+    // is one shared request for the whole list rather than a lookup per title.
+    const titles = [...moviesByKey.values()].sort((a, b) =>
       a.toLowerCase().localeCompare(b.toLowerCase())
+    );
+    const movies = await Promise.all(
+      titles.map(async (title) => {
+        let runtimeMinutes = null;
+        try {
+          runtimeMinutes = await getAmcRuntimeFromCatalog(title, searchDateISO);
+        } catch { /* dropdown is still useful without a runtime */ }
+        return { title, runtimeMinutes };
+      })
     );
 
     res.json({

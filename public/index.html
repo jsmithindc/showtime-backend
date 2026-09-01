@@ -496,7 +496,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.0.5</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.1.0</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -672,6 +672,8 @@
       seenFormats: new Set(seenResultFormats),
       activeChains: new Set(activeResultChains),
       seenChains: new Set(seenResultChains),
+      activeMovies: new Set(activeResultMovies),
+      seenMovies: new Set(seenResultMovies),
     };
   }
 
@@ -692,6 +694,8 @@
     seenResultFormats   = snap ? new Set(snap.seenFormats)   : new Set();
     activeResultChains  = snap ? new Set(snap.activeChains)  : new Set();
     seenResultChains    = snap ? new Set(snap.seenChains)    : new Set();
+    activeResultMovies  = snap ? new Set(snap.activeMovies)  : new Set();
+    seenResultMovies    = snap ? new Set(snap.seenMovies)    : new Set();
   }
 
   function setMode(mode) {
@@ -815,8 +819,8 @@
       const res = await fetch('/api/popular-movies');
       const data = await res.json();
       if (res.ok && data.movies && data.movies.length) {
-        els.movie.innerHTML = data.movies.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
-        if (pendingMovieSelection && data.movies.includes(pendingMovieSelection)) {
+        els.movie.innerHTML = data.movies.map(movieOptionHtml).join('');
+        if (pendingMovieSelection && data.movies.some((m) => movieTitleOf(m) === pendingMovieSelection)) {
           els.movie.value = pendingMovieSelection;
           pendingMovieSelection = null;
         }
@@ -907,6 +911,19 @@
     chip.addEventListener('click', () => chip.classList.toggle('on'));
   });
 
+  // Both movie endpoints return {title, runtimeMinutes}. Older deploys sent
+  // plain strings, and this runs in a browser that may have cached the old
+  // page against a new server (or the reverse), so accept either shape.
+  function movieTitleOf(m) { return typeof m === 'string' ? m : (m && m.title) || ''; }
+  function movieOptionHtml(m) {
+    const title = movieTitleOf(m);
+    const mins = typeof m === 'object' && m ? m.runtimeMinutes : null;
+    // Runtime lives in the visible label only -- the option VALUE stays the
+    // bare title, because it's sent to the backend as the movie to search for.
+    const label = mins ? `${title} (${fmtRuntime(mins)})` : title;
+    return `<option value="${escapeHtml(title)}">${escapeHtml(label)}</option>`;
+  }
+
   function setupChipGroupToggle(toggleEl, chipsEl, sectionEl, statusEl) {
     function updateLabel() {
       const chips = [...chipsEl.querySelectorAll('.chip')];
@@ -981,11 +998,11 @@
         const existingTitles = new Set(
           [...els.movie.options].map((o) => o.value).filter(Boolean)
         );
-        const newTitles = data.movies.filter((m) => !existingTitles.has(m));
+        const newTitles = data.movies.filter((m) => !existingTitles.has(movieTitleOf(m)));
         if (newTitles.length) {
           els.movie.insertAdjacentHTML(
             'beforeend',
-            newTitles.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')
+            newTitles.map(movieOptionHtml).join('')
           );
           // Keep the whole list alphabetical after appending -- without
           // this, newly-discovered titles would land at the end in
@@ -1083,6 +1100,7 @@
     els.results.innerHTML = '';
     activeResultFormats = new Set(); seenResultFormats = new Set(); // fresh search -- reset to "all formats on"
     activeResultChains = new Set(); seenResultChains = new Set(); // fresh search -- reset to "all chains on"
+    activeResultMovies = new Set(); seenResultMovies = new Set(); // fresh search -- reset to "all movies on"
 
     if (!movie || ((!lat || !lng) && !place) || !radius || !deadline) {
       els.banners.innerHTML = '<div class="banner error">Fill in movie, location, radius, and deadline before searching.</div>';
@@ -1365,6 +1383,7 @@
     els.results.innerHTML = '';
     activeResultFormats = new Set(); seenResultFormats = new Set(); // fresh search -- reset to "all formats on"
     activeResultChains = new Set(); seenResultChains = new Set(); // fresh search -- reset to "all chains on"
+    activeResultMovies = new Set(); seenResultMovies = new Set(); // fresh search -- reset to "all movies on"
 
     if (((!lat || !lng) && !place) || !radius || !availableFrom || !hours) {
       els.banners.innerHTML = '<div class="banner error">Fill in location, radius, "free from" time, and how many hours before searching.</div>';
@@ -1463,6 +1482,11 @@
   // touching it.
   let seenResultFormats = new Set();
   let seenResultChains = new Set();
+  // Window-search mixes many films, so "just show me showtimes for THIS one"
+  // is the filter that mode actually needs. Movie mode has a single film by
+  // definition, so these chips only render when showMovieName is set.
+  let activeResultMovies = new Set();
+  let seenResultMovies = new Set();
 
   const CHAIN_DISPLAY_NAMES = {
     amc: "AMC",
@@ -1602,6 +1626,26 @@
     renderResults(lastRenderData, lastRenderOpts);
   }
   window.setAllResultFormats = setAllResultFormats;
+
+  function toggleResultMovie(movie) {
+    // First click on a chip while everything is on means "only this one" --
+    // same affordance as the format and chain chips, and the common intent
+    // here: you spotted one film and want just its showtimes.
+    const allOn = activeResultMovies.size === seenResultMovies.size;
+    if (allOn) {
+      activeResultMovies = new Set([movie]);
+    } else if (activeResultMovies.has(movie)) {
+      activeResultMovies.delete(movie);
+    } else {
+      activeResultMovies.add(movie);
+    }
+    renderResults(lastRenderData, lastRenderOpts);
+  }
+
+  function setAllResultMovies(on) {
+    activeResultMovies = on ? new Set(seenResultMovies) : new Set();
+    renderResults(lastRenderData, lastRenderOpts);
+  }
 
   function setAllResultChains(on) {
     if (on) activeResultChains = new Set(seenResultChains);
@@ -1751,8 +1795,24 @@
         activeResultChains.add(c);
       }
     }
+    const allMovies = opts.showMovieName
+      ? [...new Set(allResults.map((r) => r.movieName).filter(Boolean))].sort((a, b) =>
+          a.localeCompare(b, undefined, { sensitivity: 'base' }))
+      : [];
+    for (const m of allMovies) {
+      if (!seenResultMovies.has(m)) {
+        seenResultMovies.add(m);
+        activeResultMovies.add(m);
+      }
+    }
 
-    const results = allResults.filter((r) => activeResultFormats.has(r.format) && activeResultChains.has(r.chain));
+    const results = allResults.filter((r) =>
+      activeResultFormats.has(r.format) &&
+      activeResultChains.has(r.chain) &&
+      // Only gates in window mode; allMovies is empty otherwise, and an empty
+      // seen-set would otherwise filter every result away.
+      (allMovies.length === 0 || activeResultMovies.has(r.movieName))
+    );
 
     const priced = results.filter((r) => r.price != null).length;
     const totalFound = data.matchingShowings ?? allResults.length;
@@ -1881,6 +1941,22 @@
         </details>`
       : '';
 
+    const allMoviesOn = activeResultMovies.size === seenResultMovies.size;
+    const movieChipsHtml = allMovies.length > 1
+      ? `<details class="filter-section" ${!allMoviesOn ? 'open' : ''}>
+          <summary>
+            <span class="filter-label"><span class="filter-chevron">▶</span>Movies</span>
+            <span class="filter-status">${allMoviesOn ? 'All' : `${activeResultMovies.size} of ${seenResultMovies.size}`}
+              &nbsp;<span style="cursor:pointer;" onclick="event.preventDefault();${allMoviesOn ? 'setAllResultMovies(false)' : 'setAllResultMovies(true)'}">${allMoviesOn ? 'none' : 'all'}</span>
+            </span>
+          </summary>
+          <div class="filter-body"><div class="chips">${allMovies.map((m) => {
+            const on = activeResultMovies.has(m);
+            return `<button class="chip ${on ? 'on' : ''}" onclick="toggleResultMovie(${JSON.stringify(m).replace(/"/g, '&quot;')})">${escapeHtml(m)}</button>`;
+          }).join('')}</div></div>
+        </details>`
+      : '';
+
     // Sort toggle -- always rendered (unlike the format chips, which
     // only show up when there's more than one format to choose from),
     // since distance-vs-price is a meaningful choice regardless of how
@@ -1915,7 +1991,7 @@
     </div>`;
 
     if (results.length === 0) {
-      els.results.innerHTML = filterChipsHtml + chainChipsHtml + sortToggleHtml + '<div class="empty">No showings match the selected format(s)/chain(s) -- try enabling more above.</div>';
+      els.results.innerHTML = movieChipsHtml + filterChipsHtml + chainChipsHtml + sortToggleHtml + '<div class="empty">No showings match the selected format(s)/chain(s) -- try enabling more above.</div>';
       return;
     }
 
@@ -1999,7 +2075,7 @@
          </div>`
       : '';
 
-    els.results.innerHTML = filterChipsHtml + chainChipsHtml + sortToggleHtml +
+    els.results.innerHTML = movieChipsHtml + filterChipsHtml + chainChipsHtml + sortToggleHtml +
       earlyHtml +
       `<div class="list">${lateResults.map((r) =>
         buildCardHtml(r, r === cheapestResult, opts)
