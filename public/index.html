@@ -505,7 +505,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.2.2</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.3.0</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -938,7 +938,13 @@
       parts.push(`<span class="rating" title="Metacritic -- weighted average of critic scores, out of 100">Ⓜ ${r.metacritic}</span>`);
     }
     if (r.imdb != null) {
-      parts.push(`<span class="rating" title="IMDb -- average user rating, out of 10">★ ${r.imdb}</span>`);
+      // Attribution is a condition of using IMDb's Non-Commercial Datasets, so
+      // it travels with the number itself rather than sitting in a page footer
+      // the score could be seen without.
+      const src = r.imdbIsExact
+        ? 'Information courtesy of IMDb (imdb.com). Used with permission.'
+        : 'Via OMDb, which mirrors IMDb periodically -- may lag the live score slightly.';
+      parts.push(`<span class="rating" title="IMDb -- average user rating, out of 10. ${src}">★ ${r.imdb}</span>`);
     }
     if (!parts.length) return '';
     return `<div class="ratings">${parts.join('')}</div>`;
