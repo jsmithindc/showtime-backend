@@ -3315,9 +3315,165 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
       });
     }
 
-    // Full schedule (every movie, not filtered to one title) per theater.
-    const perTheaterSchedules = await Promise.all(
-      theatersInRange.map((theater) =>
+    // ---- Chain-native discovery (v5.9.7) ----
+    // This endpoint used to route 100% through SerpApi, one call per nearby
+    // theater, long after /api/search had stopped doing that ("Skipping
+    // SerpApi entirely for N theater(s)"). Once the SerpApi quota ran out
+    // this mode just returned "nothing fits that window" regardless of what
+    // was actually playing -- a whole search mode failing silently.
+    //
+    // Regal, AMC and Cinema West each expose a real "everything playing at
+    // this theater today" call, already used elsewhere in this file. They now
+    // answer first, for free, and SerpApi covers only what they don't.
+    //
+    // Harkins and Cinemark are deliberately NOT here: both APIs are
+    // movie-scoped rather than theater-scoped (Harkins needs one request per
+    // title, Cinemark needs a movieId per title), so enumerating a theater
+    // means N calls or new page parsing. They still come through the SerpApi
+    // path below, and are the obvious next step.
+    const nativeSchedules = [];
+    const nativelyCovered = new Set();   // theater names SerpApi should skip
+    const windowChainErrors = {};
+    function noteWindowChainError(chain, msg) {
+      (windowChainErrors[chain] = windowChainErrors[chain] || []).push(msg);
+    }
+
+    const [regalNative, amcNative, cinemaWestNative] = await Promise.all([
+      // --- Regal: discovered from Regal's own theater list, like /api/search-regal
+      (async () => {
+        const out = [];
+        try {
+          const allRegal = await getRegalTheaters();
+          const inRange = allRegal
+            .map((t) => ({ ...t, distanceMin: estimatedMinutesAway(originLat, originLng, t.lat, t.lng) }))
+            .filter((t) => t.distanceMin <= Number(radiusMin));
+          await Promise.all(inRange.map((t) => priceLimit(async () => {
+            try {
+              const costTracker = { total: 0, byProvider: {} };
+              const perfs = await getRegalShowtimesForTheater({ cinemaCode: t.code, dateISO: searchDateISO, costTracker });
+              const [y, m, d] = searchDateISO.split("-");
+              out.push({
+                chain: "regal",
+                theater: { name: REGAL_CA_NAME_BY_CODE[t.code] || t.name, distanceMin: t.distanceMin },
+                entries: perfs.map((p) => ({
+                  movieName: p.movieName,
+                  time: p.showTime,
+                  format: p.format,
+                  // Regal pricing needs a cart per showing; far too expensive
+                  // to do for every movie playing. Titles and times are what
+                  // this mode is actually for.
+                  price: null,
+                  link: p.movieId
+                    ? `https://www.regmovies.com/movies/${toUrlSlug(p.movieName || "")}-${p.movieId.toLowerCase()}?date=${m}-${d}-${y}&site=${t.code}&id=${p.performanceId ?? ""}`
+                    : null,
+                })),
+              });
+            } catch (err) {
+              console.error(`Window search: Regal [${t.code}] failed:`, err.message);
+              noteWindowChainError("regal", err.message);
+            }
+          })));
+        } catch (err) {
+          console.error("Window search: Regal theater list failed:", err.message);
+          noteWindowChainError("regal", err.message);
+        }
+        return out;
+      })(),
+
+      // --- AMC: official API, and it returns real prices in the same response
+      (async () => {
+        const out = [];
+        try {
+          const seen = new Set();
+          const here = [];
+          for (const state of latLngToUsStates(originLat, originLng)) {
+            try {
+              for (const t of await getAmcTheatersByState(state)) {
+                if (seen.has(t.id)) continue;
+                seen.add(t.id);
+                const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+                if (dMin <= Number(radiusMin)) here.push({ ...t, distanceMin: dMin });
+              }
+            } catch (err) { noteWindowChainError("amc", err.message); }
+          }
+          await Promise.all(here.map((t) => priceLimit(async () => {
+            try {
+              const sts = await getAmcShowtimesForTheater({ theatreId: t.id, dateISO: searchDateISO });
+              out.push({
+                chain: "amc",
+                theater: { name: t.name, distanceMin: t.distanceMin },
+                entries: sts.map((s) => ({
+                  movieName: s.movieName,
+                  time: s.time,
+                  format: s.format,
+                  price: s.price ?? null,
+                  link: s.purchaseUrl || null,
+                })),
+              });
+            } catch (err) {
+              console.error(`Window search: AMC [${t.name}] failed:`, err.message);
+              noteWindowChainError("amc", err.message);
+            }
+          })));
+        } catch (err) {
+          noteWindowChainError("amc", err.message);
+        }
+        return out;
+      })(),
+
+      // --- Cinema West: OSM-name matched, same as /api/search
+      (async () => {
+        const out = [];
+        const matched = theatersInRange.filter((t) => CINEMAWEST_THEATER_MAP[t.name] != null);
+        await Promise.all(matched.map((theater) => priceLimit(async () => {
+          try {
+            const { siteId } = CINEMAWEST_THEATER_MAP[theater.name];
+            const token = await getCinemaWestFreshToken(siteId);
+            const showings = await getCinemaWestShowtimes({ siteId, bearerToken: token });
+            nativelyCovered.add(theater.name);
+            out.push({
+              chain: "cinemawest",
+              theater,
+              entries: showings.map((s) => ({
+                movieName: s.movieName,
+                // filmStartsAtISO carries the theater's own offset; take the
+                // wall-clock text rather than constructing a Date, which would
+                // reinterpret it in the server's timezone (a real bug fixed
+                // elsewhere in this file).
+                time: s.filmStartsAtISO ? (s.filmStartsAtISO.match(/T(\d{2}:\d{2})/) || [])[1] : null,
+                format: s.format,
+                price: null,
+                link: null,
+              })).filter((e) => e.time),
+            });
+          } catch (err) {
+            console.error(`Window search: Cinema West [${theater.name}] failed:`, err.message);
+            noteWindowChainError("cinemawest", err.message);
+          }
+        })));
+        return out;
+      })(),
+    ]);
+
+    nativeSchedules.push(...regalNative, ...amcNative, ...cinemaWestNative);
+    // Regal and AMC theaters come from their own APIs rather than OSM, so match
+    // them back by normalized name to keep SerpApi from fetching them again.
+    for (const { theater } of [...regalNative, ...amcNative]) {
+      nativelyCovered.add(normalizeTheaterName(theater.name));
+    }
+
+    const serpApiTheaters = theatersInRange.filter(
+      (t) => !nativelyCovered.has(t.name) && !nativelyCovered.has(normalizeTheaterName(t.name))
+    );
+    console.error(
+      `Window search: ${nativeSchedules.length} theater schedule(s) from chain APIs (free), ` +
+      `${serpApiTheaters.length} still going to SerpApi.`
+    );
+
+    // Full schedule (every movie, not filtered to one title) per theater --
+    // now only for theaters no chain adapter covered.
+    const serpApiSchedules = await Promise.all(
+      serpApiTheaters.map((theater) =>
         priceLimit(async () => {
           try {
             const entries = await getTheaterSchedule({
@@ -3328,11 +3484,14 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
             return { theater, entries, error: null };
           } catch (err) {
             console.error(`SerpApi lookup failed for ${theater.name}:`, err.message);
+            noteWindowChainError("other", err.message);
             return { theater, entries: [], error: err.message };
           }
         })
       )
     );
+
+    const perTheaterSchedules = [...nativeSchedules, ...serpApiSchedules];
 
     // Runtime lookups are cached per title, so this only costs one real
     // lookup per unique movie across the whole search, not per showing.
@@ -3451,11 +3610,38 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
       matchingShowings: totalMatchingShowings,
       resultsShown: cappedResults.length,
       results: cappedResults,
+      // Same per-chain reporting the main search grew in v5.9.5 -- this mode
+      // failing silently is exactly what made the SerpApi-only dependency
+      // invisible for so long.
+      chainReports: (() => {
+        // Fixed chain list, not "whichever produced schedules" -- a chain that
+        // failed outright produces nothing, and that is precisely the case
+        // worth reporting.
+        const CHAINS = ["regal", "amc", "cinemawest", "other"];
+        return CHAINS.map((chain) => {
+          const mine = chain === "other"
+            ? serpApiSchedules
+            : nativeSchedules.filter((n) => n.chain === chain);
+          const showings = mine.reduce((n, s) => n + s.entries.length, 0);
+          const errors = windowChainErrors[chain] || [];
+          return {
+            chain,
+            status: showings > 0 ? "ok"
+              : errors.length > 0 ? "failed"
+              : mine.length === 0 ? "no-theaters"
+              : "no-showings",
+            theaters: mine.length,
+            showings,
+            detail: errors[0] || null,
+          };
+        });
+      })(),
       note:
-        "Pricing here is whatever SerpApi returns directly (often null) -- " +
-        "this mode doesn't yet run the Regal/AMC/Cinemark direct-pricing " +
-        "enrichment that the single-movie search does, since those are " +
-        "keyed to one specific movie/theater at a time.",
+        "Regal, AMC and Cinema West schedules come from those chains' own APIs " +
+        "(free). Harkins and Cinemark still route through SerpApi here because " +
+        "their APIs are movie-scoped rather than theater-scoped. Pricing is " +
+        "whatever the source returns directly -- this mode doesn't run the " +
+        "per-showing pricing enrichment the single-movie search does.",
     });
   } catch (err) {
     console.error(err);
