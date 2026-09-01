@@ -3427,8 +3427,12 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
         const matched = theatersInRange.filter((t) => CINEMAWEST_THEATER_MAP[t.name] != null);
         await Promise.all(matched.map((theater) => priceLimit(async () => {
           try {
-            const { siteId } = CINEMAWEST_THEATER_MAP[theater.name];
-            const token = await getCinemaWestFreshToken(siteId);
+            // sitePath, NOT siteId: getFreshTokenCached fetches the theater's
+            // own page to read a live token out of it, and that page lives at
+            // the two-segment path ("Country-Club-Cinema/2101"). Passing the
+            // bare id builds the wrong URL. Matches the Phase 6 call above.
+            const { siteId, sitePath } = CINEMAWEST_THEATER_MAP[theater.name];
+            const token = await getCinemaWestFreshToken(sitePath);
             const showings = await getCinemaWestShowtimes({ siteId, bearerToken: token });
             nativelyCovered.add(theater.name);
             out.push({
