@@ -3724,12 +3724,12 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
           };
         });
       })(),
-      note:
-        "Regal, AMC and Cinema West schedules come from those chains' own APIs " +
-        "(free). Harkins and Cinemark still route through SerpApi here because " +
-        "their APIs are movie-scoped rather than theater-scoped. Pricing is " +
-        "whatever the source returns directly -- this mode doesn't run the " +
-        "per-showing pricing enrichment the single-movie search does.",
+      // No explanatory note here. It described the implementation -- which
+      // chains are native vs SerpApi, and why this mode doesn't price -- which
+      // is documentation, not something a person searching for a film needs on
+      // screen every time. The chain report already shows what each chain
+      // actually contributed, which is the part with real information in it.
+      // `note` is still used for genuine warnings (e.g. no theaters found).
     });
   } catch (err) {
     console.error(err);
