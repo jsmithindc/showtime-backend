@@ -854,17 +854,38 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
               states.map((state) =>
                 getAmcTheatersByState(state)
                   .then((stateTheaters) => {
-                    let addedFromState = 0;
+                    const addedFromState = [];
+                    const justMissed = [];
                     for (const t of stateTheaters) {
                       if (seenAmcIds.has(t.id)) continue;
                       seenAmcIds.add(t.id);
                       const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
                       if (dMin <= discoveryRadiusMin) {
                         amcDirectTheaters.push({ ...t, distanceMin: dMin });
-                        addedFromState++;
+                        addedFromState.push({ name: t.name, dMin });
+                      } else {
+                        justMissed.push({ name: t.name, dMin });
                       }
                     }
-                    console.error(`AMC direct: ${stateTheaters.length} theaters in ${state}, ${addedFromState} in range`);
+                    // Names and distances, not just a count. Regal's equivalent
+                    // log already lists both its in-range theaters and its
+                    // nearest misses; AMC printed "4 in range" and nothing else,
+                    // so answering "why isn't AMC <somewhere> here?" meant
+                    // re-deriving the distance math by hand. The nearest misses
+                    // matter as much as the hits: these are straight-line
+                    // estimates at a flat 22mph (see lib/distance.js), so a
+                    // theater reached by highway can land well outside the
+                    // cutoff while being a comfortable drive in reality.
+                    justMissed.sort((a, b) => a.dMin - b.dMin);
+                    console.error(
+                      `AMC direct: ${stateTheaters.length} theaters in ${state}, ${addedFromState.length} within ${radiusMin}min` +
+                      (addedFromState.length
+                        ? ": " + addedFromState.sort((a, b) => a.dMin - b.dMin).map((t) => `${t.name}=${t.dMin}min`).join(", ")
+                        : "") +
+                      (justMissed.length
+                        ? ` | nearest misses: ${justMissed.slice(0, 5).map((t) => `${t.name}=${t.dMin}min`).join(", ")}`
+                        : "")
+                    );
                     amcDirectError = amcDirectError || `checked ${states.join("+")}`;
                   })
                   .catch((err) => {
