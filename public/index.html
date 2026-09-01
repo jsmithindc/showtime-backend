@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.8.9</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.9.0</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1097,9 +1097,9 @@
       searchEs.addEventListener('done', (e) => {
         try { searchMeta = { ...searchMeta, ...JSON.parse(e.data) }; } catch (err) {}
         if (timingFirstResults === null) { timingFirstResults = Date.now(); }
-        // Clear this stream's flag here rather than at the join below, so the
-        // note narrows to "Checking Regal pricing..." the moment the other
-        // chains are done instead of staying generic until everything is.
+        // Both flags feed one shared note, but each stream still clears its own
+        // as it finishes so the note disappears the moment the LAST one is
+        // done -- not whenever the join below happens to run.
         searchStillChecking = false;
         renderMerged();
         searchEs.close();
@@ -1483,17 +1483,15 @@
     if (data.locationResolutionError) {
       banners.push(`<div class="banner warn">Location lookup: ${data.locationResolutionError}</div>`);
     }
-    // Both halves of a search stream now, so this has to say which one is
-    // still going. Naming Regal alone was fine when everything else arrived in
-    // a single shot -- now the other chains trickle in too, and if Regal
-    // happened to finish first the note would disappear while AMC or Cinemark
-    // were still delivering, making a partial list look final.
+    // One note for the whole search, regardless of which stream is still going.
+    // This used to name Regal specifically, from when Regal pricing took ~60s
+    // longer than everything else and was worth calling out. Since cart sharing
+    // (v5.8.3) Regal finishes in line with the other chains -- often first --
+    // so naming it told people nothing useful about how much longer to wait,
+    // and risked implying the rest was already final. All the note needs to say
+    // is that the list isn't finished yet.
     if (searchStillChecking || regalStillChecking) {
-      const stillChecking =
-        searchStillChecking && regalStillChecking ? 'Still checking nearby theaters...'
-        : regalStillChecking ? 'Checking Regal pricing...'
-        : 'Checking remaining theaters...';
-      banners.push(`<div class="banner" style="margin-top:8px; font-size:12px; color:#8a8478;">${stillChecking}</div>`);
+      banners.push(`<div class="banner" style="margin-top:8px; font-size:12px; color:#8a8478;">More results still coming in...</div>`);
     }
     els.banners.innerHTML = banners.join('');
 
