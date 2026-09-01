@@ -369,6 +369,53 @@
     min-width: 0;
   }
   .theater-name { font-weight: 600; font-size: 15px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Search status, not a filter. Sits directly above the format/chain chips,
+     which are also small dim rows -- without a distinct surface the two read
+     as one undifferentiated block of controls. */
+  .chain-report {
+    margin: 12px 0 4px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--ink-dim);
+    background: var(--marquee-2);
+    border: 1px solid var(--stub-line);
+    border-radius: 8px;
+  }
+  .chain-report > summary {
+    cursor: pointer;
+    font-weight: 600;
+    letter-spacing: .02em;
+    list-style: revert;
+  }
+  .chain-report[data-failed] > summary { color: var(--error); }
+  .chain-report-rows {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--stub-line);
+    font-family: ui-monospace, Menlo, monospace;
+    line-height: 1.55;
+  }
+
+  /* Window-search cards answer "what can I watch", so the FILM is the subject
+     and the theater is context. Both used to render at font-weight 600, one
+     directly above the other, which made an unfamiliar film and an unfamiliar
+     theater indistinguishable. The film now leads the card; the theater drops
+     to a lighter, dimmer supporting line. */
+  .movie-name {
+    font-weight: 700;
+    font-size: 16px;
+    line-height: 1.25;
+    color: var(--ink);
+    margin-bottom: 4px;
+  }
+  .movie-name .runtime { font-weight: 400; color: var(--ink-dim); font-size: 12px; }
+  .card.window-mode .theater-name {
+    font-weight: 400;
+    font-size: 13px;
+    color: var(--ink-dim);
+  }
+  .card.window-mode .theater-name::before { content: "at "; opacity: .7; }
   .dist { font-size: 12px; color: var(--ink-dim); white-space: nowrap; flex-shrink: 0; }
 
   .meta {
@@ -430,7 +477,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.0.3</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.0.4</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1434,17 +1481,17 @@
           : '')
       : `<span class="price unknown">Check<br/>theater</span>`;
     return `
-      <div class="card ${isBest ? 'best' : ''}">
+      <div class="card ${isBest ? 'best' : ''} ${opts.showMovieName ? 'window-mode' : ''}">
         <div class="price-col">
           ${priceHtml}
           ${isBest ? '<span class="best-tag">Cheapest</span>' : ''}
         </div>
         <div class="card-body">
+          ${opts.showMovieName ? `<div class="movie-name">${escapeHtml(r.movieName)}${r.runtimeMinutes ? ` <span class="runtime">(${r.runtimeMinutes} min)</span>` : ''}</div>` : ''}
           <div class="card-top">
             <span class="theater-name">${escapeHtml(r.theaterName)}</span>
             <span class="dist">${r.distanceMin} min away</span>
           </div>
-          ${opts.showMovieName ? `<div class="movie-name" style="font-weight:600; margin-bottom:2px;">${escapeHtml(r.movieName)}${r.runtimeMinutes ? ` <span style="font-weight:400; color:#888; font-size:12px;">(${r.runtimeMinutes} min)</span>` : ''}</div>` : ''}
           <div class="time-large">${fmtTime24to12FromRaw(r.startTime)}</div>
           ${(r.filmActuallyStartsAt || r.estimatedEndTime) ? `<div class="time-sub">${r.filmActuallyStartsAt ? `Skip trailers, arrive ${escapeHtml(r.filmActuallyStartsAt)}` : ''}${r.filmActuallyStartsAt && r.estimatedEndTime ? ' &middot; ' : ''}${r.estimatedEndTime ? `Done by ${escapeHtml(r.estimatedEndTime)}` : ''}</div>` : ''}
           <div class="meta">
@@ -1575,7 +1622,7 @@
           color = 'var(--ink)';
         } else if (c.status === 'failed') {
           text = `search failed${c.detail ? ' -- ' + c.detail : ''}`;
-          color = '#d98b7a';
+          color = 'var(--error)';
         } else if (c.status === 'no-theaters') {
           text = 'no theaters in range';
           color = 'var(--ink-dim)';
@@ -1594,9 +1641,13 @@
         ? `Chain report -- ${failed} chain${failed === 1 ? '' : 's'} failed`
         : 'Chain report';
 
-      banners.push(`<details style="margin-top:8px; font-size:12px; color:var(--ink-dim);">
-          <summary style="cursor:pointer; ${failed > 0 ? 'color:#d98b7a;' : ''}">${summary}</summary>
-          <div style="margin-top:8px; font-family:ui-monospace,Menlo,monospace; line-height:1.5;">${rows}</div>
+      // Visually set apart from the format/chain filter chips that render
+      // immediately below it. Both were plain rows of small dim text, so the
+      // report read as another filter control rather than as search status --
+      // its own surface, border and label make the distinction obvious.
+      banners.push(`<details class="chain-report"${failed > 0 ? ' data-failed="1"' : ''}>
+          <summary>${summary}</summary>
+          <div class="chain-report-rows">${rows}</div>
         </details>`);
     }
 
