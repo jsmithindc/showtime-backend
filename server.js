@@ -660,6 +660,31 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         `-- that's very likely why matchingShowings is 0. Try a later deadline.`
       : null;
 
+  // ---- SSE (v5.8.8) ----
+  // This used to be one JSON response, which meant the fastest chain waited
+  // for the slowest: AMC returns real pricing in a single call and is usually
+  // done in a second or two, but nothing painted until Cinema West's 403 and
+  // every other phase had finished. Now results stream as each chain produces
+  // them, matching what /api/search-regal already did.
+  //
+  // Event contract:
+  //   meta   -- once, before pricing: everything knowable from discovery alone
+  //   result -- one per showing, unsorted (the client merges, sorts and caps,
+  //             which it already had to do for the Regal stream anyway)
+  //   done   -- once, with the counts that can only be known after pricing
+  //
+  // Validation and geocoding above still answer with a normal JSON 400,
+  // deliberately: those fail before any of this runs, and a 400 carrying a
+  // real explanation beats an SSE stream that opens only to say it can't.
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  function sseWrite(eventName, data) {
+    if (!res.writableEnded) res.write(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`);
+  }
+
   try {
     const radiusMeters = minutesToMeters(Number(radiusMin));
     // Chain discoveries use a slightly generous radius to absorb geocoding
@@ -826,13 +851,15 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       .filter((t) => !EXCLUDED_THEATERS.has(t.name));
 
     if (theatersInRange.length === 0) {
-      return res.json({
+      sseWrite("done", {
         movie,
+        searchDate: searchDateISO,
         theatersFound: nearbyTheaters.length,
         theatersInRange: 0,
-        results: [],
+        matchingShowings: 0,
         note: "No theaters found in OpenStreetMap within that radius -- either genuinely none nearby, or this area's OSM cinema data is sparse. Worth a sanity check against Google Maps.",
       });
+      return res.end();
     }
 
     // ---- Chain resolution from OSM results (Cinemark/CinemaWest/Regency) ----
@@ -951,11 +978,12 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     });
 
     if (theatersInRangeAll.length > 0 && knownChainTheaterNames.size === 0 && regalDirectTheaters.length === 0 && amcDirectTheaters.length === 0 && harkinsDirectTheaters.length === 0 && cinemarkDirectTheaters.length === 0 && alamoDirectTheaters.length === 0 && marcusDirectTheaters.length === 0 && landmarkDirectTheaters.length === 0) {
-      return res.json({
+      sseWrite("done", {
         movie,
+        searchDate: searchDateISO,
         theatersFound: nearbyTheaters.length,
         theatersInRange: theatersInRangeAll.length,
-        results: [],
+        matchingShowings: 0,
         note: "Found theaters in range, but none matched a known chain (AMC/Regal/Cinemark/Cinema West/Alamo) -- nothing to price.",
         debug: {
           originLat,
@@ -968,6 +996,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           cinemarkDirect: cinemarkDirectTheaters.length,
         },
       });
+      return res.end();
     }
 
     // ---- Phase 2: SerpApi fallback, only for chain-matched theaters whose chain lacks native discovery (currently: none) ----
@@ -1171,6 +1200,14 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 
     // ---- Flatten to individual showings and apply the timing/format filters ----
     const results = [];
+    // Every chain adds showings through here so each one streams the instant
+    // it's built, while `results` still accumulates for the end-of-search
+    // counts. Emitting unsorted is fine -- the client sorts the merged list
+    // (it already did that for the Regal stream).
+    function addResult(built) {
+      addResult(built);
+      sseWrite("result", built);
+    }
     for (const { theater, entries } of perTheaterResults) {
       for (const entry of entries) {
         const built = buildResultIfWithinWindow({
@@ -1182,7 +1219,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           chain: "other",
           bookingLink: entry.link,
         });
-        if (built) results.push(built);
+        if (built) addResult(built);
       }
     }
 
@@ -1202,6 +1239,32 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // block above (before Phase 2) -- theaters come straight from
     // AMC's own API with their own IDs, names, and coordinates.
     //
+    // Everything the frontend needs to render its header and empty state is
+    // known now, before a single price has been fetched -- send it so the page
+    // can stop looking blank while the chains work.
+    sseWrite("meta", {
+      movie,
+      searchDate: searchDateISO,
+      searchedLat: originLat,
+      searchedLng: originLng,
+      locationResolved: resolvedLocation,
+      locationResolutionError,
+      theatersFound: nearbyTheaters.length,
+      theatersInRange: theatersInRange.length,
+      serpApiCallsUsed: theatersToSearch.length,
+      runtimeMinutes: realRuntimeMin,
+      ...(timeWindowWarning ? { warning: timeWindowWarning } : {}),
+    });
+
+    // MediaStinger doesn't depend on any chain, so start it alongside them
+    // rather than after -- it used to be awaited once every phase had
+    // finished, adding its full latency to the end of the search.
+    const mediaStingerPromise = getStingerInfo(movie, new Date().getFullYear())
+      .catch((err) => {
+        console.error(`MediaStinger lookup failed for "${movie}":`, err.message);
+        return null;
+      });
+
     // Per-request limiter for the chain phases, separate from the module-level
     // priceLimit. That one is pLimit(3) and shared by every request in the
     // process -- fine when the phases ran one at a time and 3 slots belonged
@@ -1269,7 +1332,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                   feeStatus: showing.feeStatus,
                 },
               });
-              if (built) results.push(built);
+              if (built) addResult(built);
             }
           } catch (err) {
             console.error(`AMC discovery/pricing failed for ${theaterName}:`, err.message);
@@ -1387,7 +1450,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                       feeStatus: priced.price != null ? "confirmed" : null, // real per-showing data, not an estimate -- see lib/priceAdapters/cinemark-official.js
                     },
                   });
-                  if (built) results.push(built);
+                  if (built) addResult(built);
                 } catch (err) {
                   console.error(
                     `Cinemark pricing failed for ${theaterName} showtime ${match.showtimeId}:`,
@@ -1487,7 +1550,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                     feeStatus: priced.price != null ? "confirmed" : null, // real per-showing data, not an estimate
                   },
                 });
-                if (built) results.push(built);
+                if (built) addResult(built);
               } catch (err) {
                 console.error(
                   `Cinema West pricing failed for ${theaterName} showtime ${match.showtimeId}:`,
@@ -1645,7 +1708,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                   });
                   if (built) {
                     pricingSucceeded++;
-                    results.push(built);
+                    addResult(built);
                   }
                 } catch (err) {
                   console.error(`Harkins pricing failed for ${theaterName} session ${perf.sessionId}:`, err.message);
@@ -1901,7 +1964,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                 }
                 if (built) {
                   pricingSucceeded++;
-                  results.push(built);
+                  addResult(built);
                 } else {
                   // Should be unreachable in practice now that format
                   // is checked BEFORE this point (see above) -- this
@@ -1995,7 +2058,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                 bookingLink: entry.bookingLink,
                 chain: "alamo",
               });
-              if (built) results.push(built);
+              if (built) addResult(built);
             })
           )
         );
@@ -2049,7 +2112,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                 bookingLink: entry.bookingLink,
                 chain: "marcus",
               });
-              if (built) results.push(built);
+              if (built) addResult(built);
             })
           )
         );
@@ -2111,7 +2174,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                 total: t.totalDollars,
               }));
             }
-            results.push(built);
+            addResult(built);
           }
         }
         console.error(
@@ -2167,18 +2230,9 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 
     // One lookup for the whole search, not per-theater/showing -- the
     // stinger info doesn't vary by where or when you see the same movie.
-    // Guesses the current year first (a reasonable default for anything
-    // currently in theaters), falling back to the site's own in-theaters
-    // listing if that specific guess misses. Never blocks/fails the
-    // actual search -- if MediaStinger is unreachable or the movie isn't
-    // found, this just comes back null and the rest of the response is
-    // unaffected.
-    let mediaStinger = null;
-    try {
-      mediaStinger = await getStingerInfo(movie, new Date().getFullYear());
-    } catch (err) {
-      console.error(`MediaStinger lookup failed for "${movie}":`, err.message);
-    }
+    // Started before the pricing phases (see mediaStingerPromise above) so
+    // its latency overlaps theirs instead of being tacked onto the end.
+    const mediaStinger = await mediaStingerPromise;
 
     const response = {
       movie,
@@ -2208,6 +2262,12 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       resultsShown: cappedResults.length,
       pricedCount: cappedResults.filter((r) => r.price != null).length,
       results: cappedResults,
+      // The cap now has to be applied by the client: results were streamed as
+      // they were priced, so the server never had a sorted list to slice at
+      // the moment it was sending them. Sent as a number rather than applied
+      // here so the client caps the SORTED merge, which is what the slice
+      // above always meant.
+      resultsCap: RESULTS_CAP,
     };
 
     if (timeWindowWarning) response.warning = timeWindowWarning;
@@ -2283,10 +2343,19 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       };
     }
 
-    res.json(response);
+    // `results` was already streamed showing-by-showing, so `done` carries
+    // only the totals -- sending the array again would just make the client
+    // reconcile two copies of the same data.
+    delete response.results;
+    sseWrite("done", response);
+    res.end();
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "search failed", detail: err.message });
+    // Headers are already flushed by this point, so a 500 status is no longer
+    // available -- report the failure inside the stream instead and let the
+    // client show whatever results did arrive before it broke.
+    sseWrite("done", { error: "search failed", detail: err.message });
+    if (!res.writableEnded) res.end();
   }
 });
 

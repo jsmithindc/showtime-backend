@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.8.7</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.8.8</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -918,6 +918,7 @@
     const deadline = els.deadline.value.trim();
 
     if (regalEs) { regalEs.close(); regalEs = null; }
+    if (searchEs) { searchEs.close(); searchEs = null; }
     regalStillChecking = false;
     const _timingBar = document.getElementById('timingBar');
     if (_timingBar) _timingBar.style.display = 'none';
@@ -1032,10 +1033,84 @@
       regalParams.set('place', place);
     }
 
+    // Both endpoints now stream. They feed two separate arrays and share one
+    // merge/sort/render path, so a card appears the moment its chain prices it
+    // regardless of which stream it came from.
+    //
+    // Kept as two arrays rather than one because each stream needs to be able
+    // to replace its own contribution without disturbing the other's -- the
+    // previous version reconstructed the non-Regal half by filtering
+    // lastRenderData on every Regal event, which only worked while the
+    // non-Regal half arrived in a single shot and stopped changing.
+    const searchResults = [];
+    const regalResults = [];
+    let searchMeta = {};
+
+    function renderMerged() {
+      const merged = [...searchResults, ...regalResults];
+      merged.sort((a, b) => {
+        const pa = effectivePriceForSorting(a), pb = effectivePriceForSorting(b);
+        if (pa == null && pb == null) return 0;
+        if (pa == null) return 1;
+        if (pb == null) return -1;
+        return pa - pb;
+      });
+      // The cap applies to the sorted list, which is why the server sends the
+      // number instead of slicing: it streamed these before they were sorted.
+      const cap = searchMeta.resultsCap ?? 25;
+      renderResults({
+        ...searchMeta,
+        results: merged.slice(0, cap),
+        matchingShowings: searchMeta.matchingShowings ?? merged.length,
+        // `|| {}` matters on the first render: lastRenderOpts starts as null,
+        // and renderResults' `opts = {}` default only fills in for undefined.
+        // The old code sidestepped this by calling renderResults(data) with no
+        // second argument for the first paint; renderMerged always passes one.
+      }, lastRenderOpts || {});
+    }
+
+    const searchDonePromise = new Promise((resolve) => {
+      searchEs = new EventSource(`/api/search?${params.toString()}`);
+
+      searchEs.addEventListener('meta', (e) => {
+        try {
+          searchMeta = { ...searchMeta, ...JSON.parse(e.data) };
+          renderMerged(); // paint the header/empty state instead of a blank page
+        } catch (err) { console.error('search SSE meta parse error:', err); }
+      });
+
+      searchEs.addEventListener('result', (e) => {
+        try {
+          if (timingFirstResults === null) { timingFirstResults = Date.now(); renderTiming(false); }
+          searchResults.push(JSON.parse(e.data));
+          renderMerged();
+        } catch (err) { console.error('search SSE result parse error:', err); }
+      });
+
+      searchEs.addEventListener('done', (e) => {
+        try { searchMeta = { ...searchMeta, ...JSON.parse(e.data) }; } catch (err) {}
+        if (timingFirstResults === null) { timingFirstResults = Date.now(); }
+        renderMerged();
+        searchEs.close();
+        searchEs = null;
+        resolve();
+      });
+
+      searchEs.onerror = () => {
+        // Also fires when the server answered 400 before opening the stream
+        // (bad input, geocode failure) -- there's no body to read from an
+        // EventSource, so say what's actionable rather than guessing.
+        if (searchEs) { searchEs.close(); searchEs = null; }
+        if (searchResults.length === 0 && !searchMeta.movie) {
+          els.banners.innerHTML = '<div class="banner error">Search failed to start. Check the movie, location, radius and deadline, then try again.</div>';
+        }
+        resolve();
+      };
+    });
+
     // Regal streams results via SSE (EventSource) so cards appear as each
     // performance finishes pricing -- no waiting for all to complete first.
     const regalDonePromise = wantsRegal ? new Promise((resolve) => {
-      const regalResults = [];
       regalEs = new EventSource(`/api/search-regal?${regalParams.toString()}`);
 
       regalEs.addEventListener('result', (e) => {
@@ -1043,31 +1118,16 @@
           const result = JSON.parse(e.data);
           if (timingFirstRegal === null) { timingFirstRegal = Date.now(); renderTiming(false); }
           regalResults.push(result);
-          // Filter Regal results out of lastRenderData each time so we don't
-          // double-count cards from previous SSE events (renderResults updates
-          // lastRenderData, which would otherwise accumulate Regal results).
-          const nonRegalBase = (lastRenderData?.results || []).filter((r) => r.chain !== 'regal');
-          const merged = {
-            ...(lastRenderData || {}),
-            results: [...nonRegalBase, ...regalResults],
-          };
-          merged.results.sort((a, b) => {
-            const pa = effectivePriceForSorting(a), pb = effectivePriceForSorting(b);
-            if (pa == null && pb == null) return 0;
-            if (pa == null) return 1;
-            if (pb == null) return -1;
-            return pa - pb;
-          });
-          merged.matchingShowings = (merged.matchingShowings ?? merged.results.length);
-          renderResults(merged, lastRenderOpts);
+          renderMerged();
         } catch (err) {
           console.error('Regal SSE result parse error:', err);
         }
       });
 
       regalEs.addEventListener('done', () => {
-        timingDone = Date.now();
-        renderTiming(true);
+        // timingDone is set once in the finally below, after BOTH streams are
+        // finished -- setting it here would stop the clock while /api/search
+        // was still delivering results.
         regalEs.close();
         regalEs = null;
         resolve(regalResults);
@@ -1075,48 +1135,30 @@
 
       regalEs.onerror = (err) => {
         console.error('Regal SSE connection error:', err);
-        regalEs.close();
-        regalEs = null;
+        if (regalEs) { regalEs.close(); regalEs = null; }
         resolve(regalResults); // surface whatever arrived before the error
       };
     }) : Promise.resolve(null);
 
+    // The "still checking Regal" note shows as soon as the search starts now,
+    // rather than after /api/search came back -- with both halves streaming
+    // there is no longer a point where one is known to be finished and the
+    // other isn't.
+    if (wantsRegal) regalStillChecking = true;
+
     try {
-      const res = await fetch(`/api/search?${params.toString()}`);
-      const data = await res.json();
-
-      if (!res.ok) {
-        els.banners.innerHTML = `<div class="banner error">${data.error || 'Search failed'}${data.detail ? ' -- ' + data.detail : ''}</div>`;
-        els.statusLine.textContent = '';
-        return;
-      }
-
-      timingFirstResults = Date.now();
-      renderTiming(false);
-      renderResults(data);
-
-      // Regal's results, if requested, merge in whenever they're ready --
-      // completely independent of whether the block above already
-      // rendered. A small "still checking" note shows in the meantime so
-      // it's clear more might still be coming, not that the search is
-      // simply done.
-      if (wantsRegal) {
-        regalStillChecking = true;
-        renderResults(lastRenderData, lastRenderOpts); // re-render to show the "Checking Regal..." banner
-
-        regalDonePromise.then((regalResults) => {
-          regalStillChecking = false;
-          renderResults(lastRenderData, lastRenderOpts); // re-render to remove the banner
-          notifySearchComplete((lastRenderData?.results?.length ?? 0));
-        });
-      }
+      await Promise.all([searchDonePromise, regalDonePromise]);
+      regalStillChecking = false;
+      renderMerged(); // final pass: drops the "checking Regal" banner
+      notifySearchComplete(lastRenderData?.results?.length ?? 0);
     } catch (err) {
       els.banners.innerHTML = `<div class="banner error">Couldn't reach the server. Is ./start.sh still running? (${err.message})</div>`;
       els.statusLine.textContent = '';
     } finally {
       els.searchBtn.disabled = false;
       els.searchBtn.textContent = searchMode === 'window' ? 'Find what fits' : 'Find showtimes';
-      if (!wantsRegal) { timingDone = Date.now(); renderTiming(true); notifySearchComplete(lastRenderData?.results?.length ?? 0); }
+      timingDone = Date.now();
+      renderTiming(true);
     }
   }
 
@@ -1386,6 +1428,7 @@
   let lastRenderData = null;
   let lastRenderOpts = null;
   let regalEs = null;
+  let searchEs = null;
   let regalStillChecking = false;
 
   // Mirrors the server-side sorting logic in server.js -- needed here
