@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.0.0</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.0.1</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -582,7 +582,55 @@
   };
 
   let searchMode = 'movie'; // 'movie' | 'window'
+
+  // Each mode keeps its own results, so switching back and forth doesn't throw
+  // away a search you just waited 25 seconds for. Switching used to wipe the
+  // pane outright, which also left the OTHER mode's elapsed-time bar sitting
+  // above an empty result list as if it described a search in this mode.
+  //
+  // The filter state travels with the snapshot: restoring the markup alone
+  // would leave the format/chain chips describing the mode you just left.
+  const modeSnapshots = { movie: null, window: null };
+
+  function captureModeSnapshot() {
+    const timingBar = document.getElementById('timingBar');
+    return {
+      results: els.results.innerHTML,
+      banners: els.banners.innerHTML,
+      statusLine: els.statusLine.innerHTML,
+      timingHtml: timingBar ? timingBar.innerHTML : '',
+      timingShown: timingBar ? timingBar.style.display !== 'none' : false,
+      renderData: lastRenderData,
+      renderOpts: lastRenderOpts,
+      activeFormats: new Set(activeResultFormats),
+      seenFormats: new Set(seenResultFormats),
+      activeChains: new Set(activeResultChains),
+      seenChains: new Set(seenResultChains),
+    };
+  }
+
+  function applyModeSnapshot(snap) {
+    const timingBar = document.getElementById('timingBar');
+    els.results.innerHTML = snap ? snap.results : '';
+    els.banners.innerHTML = snap ? snap.banners : '';
+    els.statusLine.innerHTML = snap ? snap.statusLine : '';
+    if (timingBar) {
+      timingBar.innerHTML = snap ? snap.timingHtml : '';
+      // Hidden outright with no snapshot -- a mode you haven't searched in yet
+      // has no elapsed time to report.
+      timingBar.style.display = snap && snap.timingShown ? '' : 'none';
+    }
+    lastRenderData = snap ? snap.renderData : null;
+    lastRenderOpts = snap ? snap.renderOpts : null;
+    activeResultFormats = snap ? new Set(snap.activeFormats) : new Set();
+    seenResultFormats   = snap ? new Set(snap.seenFormats)   : new Set();
+    activeResultChains  = snap ? new Set(snap.activeChains)  : new Set();
+    seenResultChains    = snap ? new Set(snap.seenChains)    : new Set();
+  }
+
   function setMode(mode) {
+    if (mode === searchMode) return;
+    modeSnapshots[searchMode] = captureModeSnapshot();
     searchMode = mode;
     const isWindow = mode === 'window';
     els.modeMovieBtn.classList.toggle('on', !isWindow);
@@ -590,9 +638,7 @@
     els.specificMovieFields.style.display = isWindow ? 'none' : '';
     els.windowFields.style.display = isWindow ? '' : 'none';
     els.searchBtn.textContent = isWindow ? 'Find what fits' : 'Find showtimes';
-    els.banners.innerHTML = '';
-    els.results.innerHTML = '';
-    els.statusLine.textContent = '';
+    applyModeSnapshot(modeSnapshots[mode]);
   }
   els.modeMovieBtn.addEventListener('click', () => setMode('movie'));
   els.modeWindowBtn.addEventListener('click', () => setMode('window'));
@@ -747,7 +793,12 @@
     );
   });
 
-  document.querySelectorAll('.chip').forEach((chip) => {
+  // The mode buttons reuse .chip for styling but behave like radio buttons, not
+  // toggles -- setMode already owns their on/off state. This blanket handler is
+  // registered AFTER the mode click handlers, so without the exclusion it ran
+  // second and flipped the button setMode had just switched on, leaving both
+  // modes looking unselected.
+  document.querySelectorAll('.chip:not(#modeMovieBtn):not(#modeWindowBtn)').forEach((chip) => {
     chip.addEventListener('click', () => chip.classList.toggle('on'));
   });
 
