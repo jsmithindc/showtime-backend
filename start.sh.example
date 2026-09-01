@@ -28,10 +28,17 @@ export FIRECRAWL_API_KEY="paste-your-real-key-here"
 export BRIGHTDATA_API_KEY="paste-your-real-key-here"
 export BRIGHTDATA_ZONE="paste-your-zone-name-here"
 export AMC_VENDOR_KEY="paste-your-real-key-here"
-# Fallback theater discovery when Overpass returns 0 results (common from
-# hosted/datacenter IPs). Free tier: 3000 calls/day, no billing.
-# Sign up at myprojects.geoapify.com to get a key.
+# Used for TWO things now:
+#  1. Fallback theater discovery when Overpass returns 0 results (common from
+#     hosted/datacenter IPs).
+#  2. Real driving times (lib/drive-times.js). Without this the app falls back
+#     to straight-line distance at a flat 22mph, which over-states travel time
+#     on highway routes badly enough to drop theaters that are genuinely in
+#     range -- four AMCs in one measured Denver search.
+# Free tier: 3000 calls/day, no billing. Sign up at myprojects.geoapify.com.
 export GEOAPIFY_API_KEY="paste-your-real-key-here"
+# Set to "true" to skip routing and use straight-line estimates everywhere.
+# export DISABLE_DRIVE_TIMES=true
 # Movie ratings: IMDb, Rotten Tomatoes and Metacritic in ONE lookup. None of the
 # three has a free public API of its own, and OMDb aggregates all of them.
 # Free tier: 1000 requests/day, and results are cached 12h with per-title

@@ -1,7 +1,8 @@
 const express = require("express");
 const pLimit = require("p-limit");
 const { findNearbyTheaters } = require("./lib/theaters-overpass");
-const { estimatedMinutesAway, minutesToMeters } = require("./lib/distance");
+const { estimatedMinutesAway, prefilterMinutesAway, minutesToMeters } = require("./lib/distance");
+const { getDriveMinutes, isConfigured: driveTimesConfigured } = require("./lib/drive-times");
 const { getPricedShowtimes, getTheaterSchedule } = require("./lib/priceAdapters/serpapi");
 const { resolveCanonicalLocation } = require("./lib/serpapi-location");
 const { getPricedShowtimes: getRegalPricedShowtimes, getShowtimesForTheater: getRegalShowtimesForTheater, getCachedShowtimesForTheater: getCachedRegalShowtimes, makeCartProvider: makeRegalCartProvider } = require("./lib/priceAdapters/regal-scrapedo");
@@ -664,6 +665,75 @@ function todayISOLocal() {
   return `${year}-${month}-${day}`;
 }
 
+// Replace estimated distances with real driving times, in place.
+//
+// Everything upstream filters on straight-line distance at a flat speed, which
+// is wrong enough to matter: measured from downtown Denver, four AMC theaters
+// that are a 20-30 minute drive scored 35-51 minutes and were dropped from a
+// 30-minute search. See lib/drive-times.js.
+//
+// One route-matrix call covers every chain at once -- duplicate coordinates
+// collapse inside getDriveMinutes, and results are cached per origin for 30
+// days, so a repeat search in a metro costs nothing.
+//
+// `lists` is [label, array] pairs; each array is filtered in place to what is
+// genuinely within radiusMin. Returns the surviving OSM list (the one caller
+// that holds its list in a reassignable binding rather than mutating it).
+async function applyRealDriveTimes({ originLat, originLng, radiusMin, lists }) {
+  const everyTheater = lists.flatMap(([, list]) => list);
+  if (everyTheater.length === 0) return;
+
+  const driveMinutes = await getDriveMinutes({ originLat, originLng, destinations: everyTheater });
+
+  // A measured time is filtered at exactly radiusMin. An estimate keeps the
+  // 1.15 tolerance chain discovery has always applied to it -- without this,
+  // a search with routing unavailable ends up STRICTER than before this
+  // feature existed, silently losing theaters it used to return.
+  const ESTIMATE_TOLERANCE = 1.15;
+  const measured = new WeakSet();
+
+  let routed = 0;
+  everyTheater.forEach((t, i) => {
+    if (driveMinutes[i] != null) {
+      t.distanceMin = driveMinutes[i];
+      measured.add(t);
+      routed++;
+    } else if (t.lat != null && t.lng != null) {
+      // Fall back to the plain 22mph estimate, never the loose pre-filter
+      // value -- the pre-filter is knowingly optimistic and must not reach
+      // the user as a distance.
+      t.distanceMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+    }
+    // else: no coordinates at all (e.g. the AMC static-map fallback), so
+    // whatever distanceMin it arrived with is the best available.
+  });
+
+  const limitFor = (t) =>
+    Number(radiusMin) * (measured.has(t) ? 1 : ESTIMATE_TOLERANCE);
+
+  const dropped = [];
+  for (const [label, list] of lists) {
+    const kept = list.filter((t) => t.distanceMin <= limitFor(t));
+    const cut = list.filter((t) => t.distanceMin > limitFor(t));
+    if (cut.length) {
+      dropped.push(`${label}: ` + cut.map((t) => `${t.name || t.code || "?"}=${t.distanceMin}min`).join(", "));
+    }
+    list.splice(0, list.length, ...kept);
+  }
+
+  console.error(
+    `Drive times: ${routed}/${everyTheater.length} theaters measured by road` +
+    (routed === 0
+      ? (driveTimesConfigured()
+          ? " (routing unavailable -- fell back to straight-line estimates)"
+          : process.env.DISABLE_DRIVE_TIMES === "true"
+            ? " (DISABLE_DRIVE_TIMES=true -- straight-line estimates)"
+            : " (GEOAPIFY_API_KEY unset -- straight-line estimates)")
+      : "") +
+    (dropped.length ? ` | beyond ${radiusMin}min once measured: ${dropped.join(" | ")}` : "")
+  );
+}
+
 app.get("/api/search", searchRateLimiter, async (req, res) => {
   const { movie, radiusMin, deadline, formats, chains, date, clientTime, debug, debugSerpApi } = req.query;
   let { lat, lng, location, place } = req.query;
@@ -773,9 +843,12 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 
   try {
     const radiusMeters = minutesToMeters(Number(radiusMin));
-    // Chain discoveries use a slightly generous radius to absorb geocoding
-    // imprecision and formula rounding -- a theater the formula puts at
-    // 20.3min is almost certainly driveable within the stated 20min limit.
+    // Chain discoveries use a deliberately generous radius. This is a
+    // PRE-filter only: everything that survives it is re-measured against real
+    // driving times below (lib/drive-times.js) and filtered again on the real
+    // number, so over-including here costs a few extra rows in one route-matrix
+    // call, while under-including silently loses theaters. The 1.15 pad on top
+    // of the already-optimistic prefilter speed absorbs geocoding imprecision.
     const discoveryRadiusMin = Number(radiusMin) * 1.15;
 
     // Kicked off here, awaited far below where the value is first needed. It
@@ -827,14 +900,14 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         ? getRegalTheaters()
             .then((allRegal) => {
               for (const t of allRegal) {
-                const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+                const dMin = prefilterMinutesAway(originLat, originLng, t.lat, t.lng);
                 if (dMin <= discoveryRadiusMin) {
                   const niceName = REGAL_CA_NAME_BY_CODE[t.code] || t.name;
                   regalDirectTheaters.push({ ...t, name: niceName, distanceMin: dMin });
                 }
               }
               console.error(
-                `Regal direct: ${regalDirectTheaters.length} theaters within ${radiusMin}min` +
+                `Regal direct: ${regalDirectTheaters.length} candidate theater(s) within ~${radiusMin}min (estimated)` +
                 (regalDirectTheaters.length ? ": " + regalDirectTheaters.map((t) => `${t.name} (${t.code})`).join(", ") : "")
               );
             })
@@ -859,7 +932,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                     for (const t of stateTheaters) {
                       if (seenAmcIds.has(t.id)) continue;
                       seenAmcIds.add(t.id);
-                      const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+                      const dMin = prefilterMinutesAway(originLat, originLng, t.lat, t.lng);
                       if (dMin <= discoveryRadiusMin) {
                         amcDirectTheaters.push({ ...t, distanceMin: dMin });
                         addedFromState.push({ name: t.name, dMin });
@@ -878,7 +951,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                     // cutoff while being a comfortable drive in reality.
                     justMissed.sort((a, b) => a.dMin - b.dMin);
                     console.error(
-                      `AMC direct: ${stateTheaters.length} theaters in ${state}, ${addedFromState.length} within ${radiusMin}min` +
+                      `AMC direct: ${stateTheaters.length} theaters in ${state}, ${addedFromState.length} candidate(s) within ~${radiusMin}min (estimated)` +
                       (addedFromState.length
                         ? ": " + addedFromState.sort((a, b) => a.dMin - b.dMin).map((t) => `${t.name}=${t.dMin}min`).join(", ")
                         : "") +
@@ -902,7 +975,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         ? getHarkinsTheaters()
             .then((allHarkins) => {
               for (const t of allHarkins) {
-                const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+                const dMin = prefilterMinutesAway(originLat, originLng, t.lat, t.lng);
                 if (dMin <= discoveryRadiusMin) harkinsDirectTheaters.push({ ...t, distanceMin: dMin });
               }
               console.error(
@@ -916,7 +989,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       // Alamo Drafthouse: static cinema list, pure distance matching (no API call at discovery time)
       wantChain("alamo")
         ? Promise.resolve().then(() => {
-            const found = getAlamoCinemasInRange({ originLat, originLng, discoveryRadiusMin, estimatedMinutesAway });
+            const found = getAlamoCinemasInRange({ originLat, originLng, discoveryRadiusMin, estimatedMinutesAway: prefilterMinutesAway });
             alamoDirectTheaters.push(...found);
             console.error(
               `Alamo direct: ${alamoDirectTheaters.length} cinemas within ${radiusMin}min` +
@@ -928,7 +1001,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       // Marcus Theatres: static cinema list, pure distance matching
       wantChain("marcus")
         ? Promise.resolve().then(() => {
-            const found = getMarcusCinemasInRange({ originLat, originLng, discoveryRadiusMin, estimatedMinutesAway });
+            const found = getMarcusCinemasInRange({ originLat, originLng, discoveryRadiusMin, estimatedMinutesAway: prefilterMinutesAway });
             marcusDirectTheaters.push(...found);
             console.error(
               `Marcus direct: ${marcusDirectTheaters.length} cinemas within ${radiusMin}min` +
@@ -940,7 +1013,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       // Landmark Theatres: static theater list, pure distance matching
       wantChain("landmark")
         ? Promise.resolve().then(() => {
-            const found = getLandmarkTheatersInRange({ originLat, originLng, discoveryRadiusMin, estimatedMinutesAway });
+            const found = getLandmarkTheatersInRange({ originLat, originLng, discoveryRadiusMin, estimatedMinutesAway: prefilterMinutesAway });
             landmarkDirectTheaters.push(...found);
             console.error(
               `Landmark direct: ${landmarkDirectTheaters.length} theater(s) within ${radiusMin}min` +
@@ -960,7 +1033,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       resolvedLocation = locationResult.value;
     }
 
-    const theatersInRange = nearbyTheaters
+    let theatersInRange = nearbyTheaters
       .map((t) => {
         const normalizedName = normalizeTheaterName(t.name);
         const regalEntry = REGAL_CINEMA_MAP[normalizedName];
@@ -968,9 +1041,10 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         const tLat = coordOverride ? coordOverride.lat : t.lat;
         const tLng = coordOverride ? coordOverride.lng : t.lng;
         const displayName = regalDisplayNameFor(regalEntry) || THEATER_DISPLAY_NAMES[normalizedName] || undefined;
-        return { ...t, name: normalizedName, lat: tLat, lng: tLng, ...(displayName ? { displayName } : {}), distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
+        return { ...t, name: normalizedName, lat: tLat, lng: tLng, ...(displayName ? { displayName } : {}), distanceMin: prefilterMinutesAway(originLat, originLng, tLat, tLng) };
       })
-      .filter((t) => t.distanceMin <= Number(radiusMin))
+      // Loose pre-filter; the real drive-time pass below re-filters on truth.
+      .filter((t) => t.distanceMin <= discoveryRadiusMin)
       .filter((t) => !EXCLUDED_THEATERS.has(t.name));
 
     if (theatersInRange.length === 0) {
@@ -999,7 +1073,9 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       for (const t of theatersInRange) {
         const entry = AMC_THEATRE_MAP[t.name];
         if (entry != null) {
-          amcDirectTheaters.push({ id: entry.id, name: entry.name, distanceMin: t.distanceMin });
+          // lat/lng carried through so the drive-time pass below can measure
+          // these too -- without them they keep the loose pre-filter distance.
+          amcDirectTheaters.push({ id: entry.id, name: entry.name, lat: t.lat, lng: t.lng, distanceMin: t.distanceMin });
           console.error(`AMC static-map fallback: OSM "${t.name}" -> AMC id ${entry.id} ("${entry.name}")`);
         }
       }
@@ -1016,7 +1092,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       try {
         const allCinemark = require("./lib/cinemark-theaters");
         for (const t of allCinemark) {
-          const dMin = estimatedMinutesAway(originLat, originLng, t.lat, t.lng);
+          const dMin = prefilterMinutesAway(originLat, originLng, t.lat, t.lng);
           if (dMin <= discoveryRadiusMin) {
             // Strip Cinemark's SEO prefix ("Movie Theater In X, Y | Cinemark Z" -> "Cinemark Z")
             // and decode HTML entities (&amp; -> &) baked into the theater list.
@@ -1027,12 +1103,41 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           }
         }
         console.error(
-          `Cinemark direct: ${cinemarkDirectTheaters.length} theaters within ${radiusMin}min` +
+          `Cinemark direct: ${cinemarkDirectTheaters.length} candidate theater(s) within ~${radiusMin}min (estimated)` +
           (cinemarkDirectTheaters.length ? ": " + cinemarkDirectTheaters.map((t) => t.name).join(", ") : "")
         );
       } catch (err) {
         console.error("Cinemark theater list unavailable (run scripts/build-cinemark-theater-map.js to generate it):", err.message);
       }
+    }
+
+    // ---- Phase 1b: replace estimated distances with real driving times ----
+    // See applyRealDriveTimes(). theatersInRange is spliced in place, so the
+    // binding stays valid.
+    await applyRealDriveTimes({
+      originLat, originLng, radiusMin,
+      lists: [
+        ["Regal", regalDirectTheaters], ["AMC", amcDirectTheaters],
+        ["Harkins", harkinsDirectTheaters], ["Alamo", alamoDirectTheaters],
+        ["Marcus", marcusDirectTheaters], ["Landmark", landmarkDirectTheaters],
+        ["Cinemark", cinemarkDirectTheaters], ["OSM", theatersInRange],
+      ],
+    });
+
+    // The pre-filter admitted these; real driving times may not. Re-check
+    // before going further, or a search where nothing is genuinely in range
+    // falls through to the chain loops and reports "no showings" instead of
+    // "no theaters" -- a materially different answer for the user.
+    if (theatersInRange.length === 0) {
+      sseWrite("done", {
+        movie,
+        searchDate: searchDateISO,
+        theatersFound: nearbyTheaters.length,
+        theatersInRange: 0,
+        matchingShowings: 0,
+        note: `No theaters within ${radiusMin} minutes' drive. Widening the radius, or checking a nearby city, is the next thing to try.`,
+      });
+      return res.end();
     }
 
     const cinemaWestResolvedTheaters = {};
@@ -3010,6 +3115,26 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       return res.end();
     }
 
+    // Real driving times before anything is fetched, so this endpoint agrees
+    // with /api/search about which Regal theaters are in range. Without it the
+    // same radius returned a different Regal set depending on which path ran.
+    await applyRealDriveTimes({
+      originLat, originLng, radiusMin,
+      lists: [["Regal", regalDirectTheaters]],
+    });
+    if (regalDirectTheaters.length === 0) {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+      res.write(`event: done\ndata: ${JSON.stringify({
+        movie,
+        chainReports: [{ chain: "regal", status: "no-theaters", theaters: 0, showings: 0,
+          detail: `no Regal theater within ${radiusMin} minutes' drive` }],
+      })}\n\n`);
+      return res.end();
+    }
+
     // Deduplicate by code -- Regal API returns each theater once, but be safe.
     const seenRegalCodes = new Set();
     const uniqueRegalTheaters = regalDirectTheaters.filter((t) => {
@@ -3409,9 +3534,10 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
         const tLat = coordOverride ? coordOverride.lat : t.lat;
         const tLng = coordOverride ? coordOverride.lng : t.lng;
         const displayName = regalDisplayNameFor(regalEntry) || THEATER_DISPLAY_NAMES[normalizedName] || undefined;
-        return { ...t, name: normalizedName, lat: tLat, lng: tLng, ...(displayName ? { displayName } : {}), distanceMin: estimatedMinutesAway(originLat, originLng, tLat, tLng) };
+        return { ...t, name: normalizedName, lat: tLat, lng: tLng, ...(displayName ? { displayName } : {}), distanceMin: prefilterMinutesAway(originLat, originLng, tLat, tLng) };
       })
-      .filter((t) => t.distanceMin <= Number(radiusMin))
+      // Loose pre-filter; applyRealDriveTimes re-filters on measured time.
+      .filter((t) => t.distanceMin <= Number(radiusMin) * 1.5)
       .filter((t) => !EXCLUDED_THEATERS.has(t.name));
 
     if (theatersInRange.length === 0) {
@@ -3480,7 +3606,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
               const [y, m, d] = searchDateISO.split("-");
               out.push({
                 chain: "regal",
-                theater: { name: REGAL_CA_NAME_BY_CODE[t.code] || t.name, distanceMin: t.distanceMin },
+                theater: { name: REGAL_CA_NAME_BY_CODE[t.code] || t.name, lat: t.lat, lng: t.lng, distanceMin: t.distanceMin },
                 entries: perfs.map((p) => ({
                   movieName: p.movieName,
                   // slice(0,5): showTime is "HH:MM:SS" and parseGoogleTime only
@@ -3533,7 +3659,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
               const sts = await getAmcShowtimesForTheater({ theatreId: t.id, dateISO: searchDateISO });
               out.push({
                 chain: "amc",
-                theater: { name: t.name, distanceMin: t.distanceMin },
+                theater: { name: t.name, lat: t.lat, lng: t.lng, distanceMin: t.distanceMin },
                 entries: sts.map((s) => ({
                   movieName: s.movieName,
                   // Same "HH:MM:SS" shape as Regal (split off an ISO datetime).
@@ -3627,7 +3753,7 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
           for (const [name, { cinema, entries: venueEntries }] of byVenue) {
             out.push({
               chain,
-              theater: { name, distanceMin: cinema.distanceMin },
+              theater: { name, lat: cinema.lat, lng: cinema.lng, distanceMin: cinema.distanceMin },
               entries: venueEntries.map((e) => ({
                 movieName: e.movieName,
                 time: (e.startTimeRaw || "").slice(0, 5),
@@ -3649,6 +3775,28 @@ app.get("/api/window-search", searchRateLimiter, async (req, res) => {
     // array of per-theater schedules. Flattened rather than destructured by
     // position so adding another chain doesn't require touching this line.
     for (const group of nativeGroups) nativeSchedules.push(...group);
+
+    // ---- Replace estimated distances with real driving times ----
+    // Discovery above ran on a deliberately wide 1.5x net of straight-line
+    // estimates. Now that every venue is known, measure them for real in one
+    // call and drop what is actually too far. Done here rather than before the
+    // fetches because this mode discovers and fetches per chain in one pass --
+    // there is no earlier point where the full venue list exists.
+    //
+    // The theater objects are shared with nativeSchedules, so updating them
+    // updates the schedules; the schedule list is then re-filtered to match.
+    await applyRealDriveTimes({
+      originLat, originLng, radiusMin,
+      lists: [["native venues", nativeSchedules.map((s) => s.theater)], ["OSM", theatersInRange]],
+    });
+    const withinDrive = nativeSchedules.filter((s) => s.theater.distanceMin <= Number(radiusMin));
+    if (withinDrive.length !== nativeSchedules.length) {
+      console.error(
+        `Window search: dropped ${nativeSchedules.length - withinDrive.length} venue(s) that the ` +
+        `straight-line net admitted but the measured drive puts beyond ${radiusMin}min.`
+      );
+      nativeSchedules.splice(0, nativeSchedules.length, ...withinDrive);
+    }
 
     // Regal and AMC theaters come from their own APIs, not OSM, so they have to
     // be matched back to the OSM list by name -- and exact matching does not

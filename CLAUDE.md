@@ -120,6 +120,20 @@ requested above but present in `server.js` under `chain: "cinemawest"`.)
 - **`DISABLE_CINEMARK_PRICING` / `DISABLE_REGAL_PRICING` are inverted-default
   checks** (`!== "false"`): pricing is paused unless the env var is the
   literal string `"false"`. Unset, `"true"`, or any typo all mean "paused."
+- **"Minutes away" is a real routed drive time when `GEOAPIFY_API_KEY` is
+  set, and a straight-line guess otherwise.** `lib/drive-times.js` measures
+  every discovered theater in one Geoapify route-matrix call
+  (`applyRealDriveTimes()` in `server.js`), cached per origin for 30 days.
+  Chain discovery deliberately pre-filters WIDE (`prefilterMinutesAway`, a
+  45mph straight-line guess) because that pass only decides what's worth
+  asking about -- the real filter happens after measurement. Two consequences:
+  a "45min" figure in a discovery log is a candidate estimate, not a result;
+  and if routing is unavailable the fallback keeps the historical 1.15
+  tolerance on estimates, so behaviour matches the pre-routing code rather
+  than becoming stricter. Do not tighten the pre-filter to "save calls" --
+  duplicate coordinates already collapse and results are cached, and a
+  too-tight pre-filter loses theaters invisibly, which is the exact bug this
+  replaced (four Denver AMCs, 20-30min drives, scored 35-51min and dropped).
 - **Runtime is not looked up live in the legacy SerpApi path** — see the
   `RUNTIME_MIN` constant / `lib/movie-runtime.js` overrides. Confirm which
   code path (official adapter vs. SerpApi fallback) a given theater is
