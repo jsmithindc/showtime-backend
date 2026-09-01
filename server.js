@@ -1201,9 +1201,39 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // amcDirectTheaters was populated in the early chain-resolution
     // block above (before Phase 2) -- theaters come straight from
     // AMC's own API with their own IDs, names, and coordinates.
-    await Promise.all(
+    //
+    // Per-request limiter for the chain phases, separate from the module-level
+    // priceLimit. That one is pLimit(3) and shared by every request in the
+    // process -- fine when the phases ran one at a time and 3 slots belonged
+    // to whichever chain was up, but with all eight running at once they would
+    // queue behind each other and undo most of the concurrency below. It also
+    // meant two simultaneous searches split three slots between them.
+    //
+    // Scoped to this request so one search can't starve another, and sized for
+    // eight chains that talk to eight unrelated hosts. priceLimit stays as-is
+    // for the SerpApi path, where the low cap is deliberate (free-tier hourly
+    // throughput, not just the monthly total).
+    const chainLimit = pLimit(8);
+
+    // ---- Phases 4-11 run CONCURRENTLY (v5.8.7) ----
+    // Each phase below starts immediately and its promise is collected; they
+    // are all awaited together after Phase 11. Previously each phase was its
+    // own `await`, so the response took the SUM of all eight chains rather
+    // than the duration of the slowest -- and one chain's failure (Cinema
+    // West's token 403, which happens on every search) delayed the five
+    // phases behind it. Phase 1 discovery already worked this way; the
+    // pricing phases just never got the same treatment.
+    //
+    // Safe to parallelize: every phase pushes into the shared `results`
+    // array (Array.push is synchronous, so concurrent pushes don't race) and
+    // owns a set of variables used nowhere outside itself. Each carries its
+    // own .catch so one chain failing can't reject the others.
+    //
+    // Phase bodies are deliberately NOT re-indented into their new wrappers
+    // -- re-indenting ~900 lines would bury the actual change in whitespace.
+    const phaseAmc = Promise.all(
       amcDirectTheaters.map((theater) =>
-        priceLimit(async () => {
+        chainLimit(async () => {
           const theaterName = theater.name;
           try {
             // No candidateMinutes passed -- this is now the discovery
@@ -1246,9 +1276,10 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           }
         })
       )
-    );
+    ).catch((err) => console.error("Phase 4 (AMC) failed:", err.message));
 
     // ---- Phase 5: real pricing for Cinemark theaters we have IDs for ----
+    const phaseCinemark = (async () => {
     const cinemarkPricingDisabled = false;
 
     // cinemarkDirectTheaters was already computed above -- reused here as-is.
@@ -1328,7 +1359,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 
           await Promise.all(
             toPrice.map(({ theaterName, match, startTimeRaw }) =>
-              priceLimit(async () => {
+              chainLimit(async () => {
                 try {
                   const priced = await getCinemarkTicketPricing({
                     theaterId: match.theaterId,
@@ -1371,6 +1402,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         }
       }
     }
+    })().catch((err) => console.error("Phase 5 (Cinemark) failed:", err.message));
 
     // ---- Phase 6: Cinema West -- native discovery + pricing (Vista-family platform) ----
     // Token is now fetched live per theater (see getFreshTokenCached in
@@ -1400,9 +1432,9 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       return match ? `${match[1]}:${match[2]}` : null;
     }
 
-    await Promise.all(
+    const phaseCinemaWest = Promise.all(
       cinemaWestTheaterEntries.map((theater) =>
-        priceLimit(async () => {
+        chainLimit(async () => {
           const theaterName = theater.displayName || theater.name;
           const { siteId, sitePath } = cinemaWestResolvedTheaters[theaterName];
           try {
@@ -1468,7 +1500,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           }
         })
       )
-    );
+    ).catch((err) => console.error("Phase 6 (Cinema West) failed:", err.message));
 
     // ---- Phase 7: Harkins -- native discovery + pricing (Vista-family platform) ----
     // harkinsDirectTheaters was populated in the early chain-resolution
@@ -1479,6 +1511,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // to call it ONCE per search, not once per matched theater -- filter
     // its results down to the theaters we actually matched afterward.
 
+    const phaseHarkins = (async () => {
     if (harkinsDirectTheaters.length > 0) {
       try {
         // anyTheaterId just needs to be A real Harkins theater ID (the
@@ -1498,7 +1531,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 
         await Promise.all(
           harkinsDirectTheaters.map((theater) =>
-            priceLimit(async () => {
+            chainLimit(async () => {
               const theaterName = theater.name;
               const { harkinsId, cinemaId } = theater;
               const theaterPerformances = allPerformances.filter((p) => String(p.theatreId) === String(harkinsId));
@@ -1633,6 +1666,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         console.error(`Harkins showtime discovery failed:`, err.message);
       }
     }
+    })().catch((err) => console.error("Phase 7 (Harkins) failed:", err.message));
 
     // No post-hoc filter needed here anymore -- theatersToSearch was
     // already narrowed to known-chain theaters before Phase 2 ever ran,
@@ -1647,9 +1681,9 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // chain.
     const regencyTheaterEntries = theatersInRange.filter((t) => regencyResolvedTheaters[t.name]);
 
-    await Promise.all(
+    const phaseRegency = Promise.all(
       regencyTheaterEntries.map((theater) =>
-        priceLimit(async () => {
+        chainLimit(async () => {
           const theaterName = theater.displayName || theater.name;
           const { chain, site, seatsSiteId, locationSlug } = regencyResolvedTheaters[theaterName];
           try {
@@ -1902,7 +1936,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
           }
         })
       )
-    );
+    ).catch((err) => console.error("Phase 8 (Regency) failed:", err.message));
 
     // ---- Phase 9: Alamo Drafthouse -- public v2 schedule API + seats-endpoint pricing ----
     // Pricing: GET /s/mother/v1/app/seats/{cinemaId}/{sessionId}
@@ -1910,6 +1944,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // CONFIRMED REAL 2026-08-25: Austin $7.58, DTLA $9.00.
     // Convenience fee: $2.19 (confirmed real from user checkout receipt).
     const ALAMO_FEE = 2.19;
+    const phaseAlamo = (async () => {
     if (alamoDirectTheaters.length > 0) {
       try {
         const alamoEntries = await getAlamoShowtimesForCinemas({
@@ -1925,7 +1960,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 
         await Promise.all(
           alamoEntries.map((entry) =>
-            priceLimit(async () => {
+            chainLimit(async () => {
               // Pre-check the time window before making a pricing call
               const wouldBeInWindow = buildResultIfWithinWindow({
                 theaterName: entry.cinema.name,
@@ -1968,10 +2003,12 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         console.error(`Alamo showtime discovery failed:`, err.message);
       }
     }
+    })().catch((err) => console.error("Phase 9 (Alamo) failed:", err.message));
 
     // ---- Phase 10: Marcus Theatres -- api-injin.marcustheatres.com CMS + order API pricing ----
     // Booking fee: $2.59 (confirmed live 2026-08-25, Gurnee Mills IL).
     // Token is auto-fetched from ticketing.marcustheatres.com JS bundle; no env var needed.
+    const phaseMarcus = (async () => {
     if (marcusDirectTheaters.length > 0) {
       try {
         const marcusEntries = await getMarcusShowtimesForCinemas({
@@ -1981,7 +2018,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         });
         await Promise.all(
           marcusEntries.map((entry) =>
-            priceLimit(async () => {
+            chainLimit(async () => {
               const wouldBeInWindow = buildResultIfWithinWindow({
                 theaterName: entry.cinema.name,
                 distanceMin: entry.cinema.distanceMin,
@@ -2020,12 +2057,14 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         console.error(`Marcus showtime discovery failed:`, err.message);
       }
     }
+    })().catch((err) => console.error("Phase 10 (Marcus) failed:", err.message));
 
     // ---- Phase 11: Landmark Theatres -- gatsby-source-boxofficeapi schedule + booking API pricing ----
     // Booking URLs are pre-generated per-showtime in the schedule response.
     // Pricing: GET booking.landmarktheatres.com/api/launch/ticketing/{uuid} (Cloudflare-protected,
     // through proxy chain). One call per theater (cheapest-first ticket array). Returns all standard
     // ticket types; guest calls get Adult/Child/Senior etc., not loyalty-member-only prices.
+    const phaseLandmark = (async () => {
     if (landmarkDirectTheaters.length > 0) {
       try {
         const landmarkEntries = await getLandmarkShowtimesForTheaters({
@@ -2083,6 +2122,15 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         console.error(`Landmark showtime discovery failed:`, err.message);
       }
     }
+    })().catch((err) => console.error("Phase 11 (Landmark) failed:", err.message));
+
+    // ---- Join: every chain above has been running concurrently since it was
+    // defined. Nothing below may read `results` until they've all settled.
+    // Each phase already carries its own .catch, so this can't reject.
+    await Promise.all([
+      phaseAmc, phaseCinemark, phaseCinemaWest, phaseHarkins,
+      phaseRegency, phaseAlamo, phaseMarcus, phaseLandmark,
+    ]);
 
     // For AMC results eligible for the Stubs Tuesday/Wednesday discount,
     // sort (and rank "cheapest") by the discounted price instead of the
