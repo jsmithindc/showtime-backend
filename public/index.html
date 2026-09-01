@@ -430,7 +430,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.8.5</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">5.8.6</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -684,6 +684,42 @@
   els.place.addEventListener('input', () => {
     els.lat.value = '';
     els.lng.value = '';
+  });
+
+  // Arrow keys step the whole date, not one segment of it.
+  //
+  // A native <input type="date"> increments each segment independently and
+  // wraps it inside its own range, so pressing Up on the day part of Aug 31
+  // gives Aug 1 rather than Sep 1. That's correct per spec but wrong for this
+  // app, where the date is nearly always "today or one of the next few days"
+  // and people reach for the arrows expecting a day stepper.
+  //
+  // Date arithmetic goes through local Y/M/D components, never toISOString(),
+  // for the same reason the default value above does: toISOString() converts
+  // to UTC and silently lands on the wrong day for anyone west of Greenwich
+  // in the evening -- the exact bug called out in that comment.
+  els.searchDate.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+
+    const parts = (els.searchDate.value || '').split('-').map(Number);
+    // Fall back to today if the field is empty or half-typed.
+    const base = parts.length === 3 && parts.every((n) => !isNaN(n))
+      ? new Date(parts[0], parts[1] - 1, parts[2])
+      : new Date();
+
+    base.setDate(base.getDate() + (e.key === 'ArrowUp' ? 1 : -1));
+
+    // Floor at today -- showtimes for a past date are always empty, so
+    // stepping down past it is never what someone means.
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (base < today) return;
+
+    els.searchDate.value =
+      `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}-${String(base.getDate()).padStart(2, '0')}`;
+    // Let anything listening for a date change react as if it were typed.
+    els.searchDate.dispatchEvent(new Event('change', { bubbles: true }));
   });
 
   els.locateBtn.addEventListener('click', () => {
