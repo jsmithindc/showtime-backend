@@ -891,11 +891,18 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       RUNTIME_MIN,
       makeRuntimeSource({ originLat, originLng, radiusMin, dateISO: searchDateISO })
     );
-    // One film, so one lookup -- fired alongside discovery and awaited only at
-    // the end, where it's attached to `done`. Never blocks a result.
-    // Year from the search date, so OMDb resolves the film now in theaters
-    // rather than a same-titled one from another decade.
+    // One film, so one lookup -- fired alongside discovery. Never blocks a
+    // result. Year from the search date, so OMDb resolves the film now in
+    // theaters rather than a same-titled one from another decade.
     const ratingsPromise = getMovieRatings(movie, Number(searchDateISO.slice(0, 4))).catch(() => null);
+    // Pushed the moment it lands instead of riding along on `done`. This
+    // resolves in a few seconds while a full search can take a minute, and the
+    // poster is the header of the page -- there is no reason for it to wait on
+    // the slowest chain. Still included in `done` as well, so a client that
+    // missed the event (or reconnected) is not left without it.
+    ratingsPromise
+      .then((ratings) => { if (ratings) sseWrite("ratings", { ratings }); })
+      .catch(() => {});
 
     function wantChain(name) {
       return !wantedChains || wantedChains.includes(name);

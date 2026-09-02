@@ -561,7 +561,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.8.0</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.8.1</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -995,6 +995,32 @@
                  loading="lazy" onerror="this.remove()">`;
   }
 
+  // Movie mode's title-page header. Split out from renderResults so it can be
+  // painted the instant a search starts, from the form alone, rather than
+  // waiting for the server -- the title and runtime are already known locally
+  // (the dropdown carries both), and the poster and scores fill in when the
+  // `ratings` event lands. Previously all of it waited for `done`, so on a
+  // 52-second search the film's own artwork appeared 52 seconds in.
+  //
+  // Year comes from the ratings match, not the search date -- a re-release or
+  // a late-December film would otherwise be labelled with the wrong one.
+  function filmHeroHtml(data, { countLine }) {
+    const metaBits = [];
+    if (data.ratings && data.ratings.year) metaBits.push(escapeHtml(String(data.ratings.year)));
+    if (data.runtimeMinutes) {
+      metaBits.push(data.runtimeIsEstimate
+        ? `<span title="No runtime data was available for this film, so end times and the deadline filter use a ${fmtRuntime(data.runtimeMinutes)} assumption. Actual end times may be later.">~${fmtRuntime(data.runtimeMinutes)}, estimated</span>`
+        : fmtRuntime(data.runtimeMinutes));
+    }
+    return `<div class="film-hero">` +
+      `<h2 class="film-hero-title">${escapeHtml(data.movie || '')}</h2>` +
+      (metaBits.length ? `<div class="film-hero-meta">${metaBits.join(' &middot; ')}</div>` : '') +
+      (data.ratings ? posterHtml(data.ratings, data.movie, 'hero') : '') +
+      (data.ratings ? ratingsHtml(data.ratings) : '') +
+      `<div class="film-hero-count">${countLine}</div>` +
+    `</div>`;
+  }
+
   function ratingsHtml(r) {
     if (!r) return '';
     const parts = [];
@@ -1033,7 +1059,10 @@
     // Runtime lives in the visible label only -- the option VALUE stays the
     // bare title, because it's sent to the backend as the movie to search for.
     const label = mins ? `${title} (${fmtRuntime(mins)})` : title;
-    return `<option value="${escapeHtml(title)}">${escapeHtml(label)}</option>`;
+    // data-runtime as well as the label: the header painted at search start
+    // reads the number from here rather than re-parsing "(2h 25m)" back out
+    // of display text.
+    return `<option value="${escapeHtml(title)}"${mins ? ` data-runtime="${mins}"` : ''}>${escapeHtml(label)}</option>`;
   }
 
   function setupChipGroupToggle(toggleEl, chipsEl, sectionEl, statusEl) {
@@ -1223,6 +1252,21 @@
 
     saveCurrent();
 
+    // Paint the film header NOW, before geocoding and before either request is
+    // sent. The title is whatever was searched for and the dropdown already
+    // carries the runtime, so there is nothing to wait for; the year, poster
+    // and scores fill in when the `ratings` event lands a few seconds later.
+    // Placed ahead of the geocode await deliberately -- seeding it after that
+    // left the page blank for however long geocoding took.
+    const _selectedOption = els.movie.selectedOptions && els.movie.selectedOptions[0];
+    const localRuntimeMin = _selectedOption && _selectedOption.value === movie && _selectedOption.dataset.runtime
+      ? Number(_selectedOption.dataset.runtime)
+      : null;
+    els.statusLine.innerHTML = filmHeroHtml(
+      { movie, ...(localRuntimeMin ? { runtimeMinutes: localRuntimeMin } : {}) },
+      { countLine: 'Searching theaters&hellip;' }
+    );
+
     const activeFormats = [...document.querySelectorAll('#formatChips .chip.on')].map((c) => c.dataset.format);
     const activeChains = [...document.querySelectorAll('#chainChips .chip.on')].map((c) => c.dataset.chain);
 
@@ -1250,7 +1294,10 @@
 
     els.searchBtn.disabled = true;
     els.searchBtn.textContent = 'Searching...';
-    els.statusLine.textContent = 'Searching nearby theaters...';
+    // No status-line text here any more: the film header painted above already
+    // says "Searching theaters..." in its count line, and assigning to
+    // statusLine at this point wiped that header off the page microseconds
+    // after it was drawn.
 
     // Timing bar
     const timingBar = document.getElementById('timingBar');
@@ -1333,7 +1380,14 @@
     // non-Regal half arrived in a single shot and stopped changing.
     const searchResults = [];
     const regalResults = [];
-    let searchMeta = {};
+    // Seeded from the form (see the header paint above) so re-renders during
+    // the search keep the title and runtime instead of dropping back to
+    // placeholders. The server's own meta overwrites these when it arrives.
+    let searchMeta = {
+      movie,
+      searchDate: els.searchDate.value,
+      ...(localRuntimeMin ? { runtimeMinutes: localRuntimeMin, runtimeIsEstimate: false } : {}),
+    };
     let regalChainReports = [];
 
     function renderMerged() {
@@ -1349,7 +1403,18 @@
       // This also covers the pre-`meta` case, where an empty searchMeta
       // rendered as "No showings of undefined ... on ?".
       const nothingYet = searchResults.length === 0 && regalResults.length === 0;
-      if (nothingYet && (searchStillChecking || regalStillChecking)) return;
+      if (nothingYet && (searchStillChecking || regalStillChecking)) {
+        // Nothing to list yet, but the film header doesn't depend on results --
+        // paint it now and let the poster and scores fill in as they arrive,
+        // rather than leaving the page blank for the whole search.
+        if (!(lastRenderOpts || {}).showMovieName) {
+          els.statusLine.innerHTML = filmHeroHtml(
+            { ...searchMeta, movie: searchMeta.movie || movie },
+            { countLine: 'Searching theaters&hellip;' }
+          );
+        }
+        return;
+      }
       if (nothingYet && !searchMeta.movie) return;
       const merged = [...searchResults, ...regalResults];
       merged.sort((a, b) => {
@@ -1382,6 +1447,15 @@
           searchMeta = { ...searchMeta, ...JSON.parse(e.data) };
           renderMerged(); // paint the header/empty state instead of a blank page
         } catch (err) { console.error('search SSE meta parse error:', err); }
+      });
+
+      // Ratings resolve early (one OMDb call fired alongside discovery) but used
+      // to ride along on `done`, so the poster waited for the slowest chain.
+      searchEs.addEventListener('ratings', (e) => {
+        try {
+          searchMeta = { ...searchMeta, ...JSON.parse(e.data) };
+          renderMerged();
+        } catch (err) { console.error('search SSE ratings parse error:', err); }
       });
 
       searchEs.addEventListener('result', (e) => {
@@ -1994,32 +2068,11 @@
         ? `${countLabel} ${subjectLabel} on <b>${dateLabel}</b> (${priced} priced). Location resolved to: ${locationDisplay}`
         : `No movies fit that window on <b>${dateLabel}</b>. Location resolved to: ${locationDisplay}`;
     } else {
-      // Movie mode: one film for the whole search, so it gets a title-page
-      // header. The film's name moves out of the sentence and into a heading,
-      // which is why the count line below reads "5 showings on ..." rather than
-      // repeating "showings of <movie>".
-      //
-      // Year comes from the ratings match, not the search date -- a re-release
-      // or a late-December film would otherwise be labelled with the wrong one.
-      const metaBits = [];
-      if (data.ratings && data.ratings.year) metaBits.push(escapeHtml(String(data.ratings.year)));
-      if (data.runtimeMinutes) {
-        metaBits.push(data.runtimeIsEstimate
-          ? `<span title="No runtime data was available for this film, so end times and the deadline filter use a ${fmtRuntime(data.runtimeMinutes)} assumption. Actual end times may be later.">~${fmtRuntime(data.runtimeMinutes)}, estimated</span>`
-          : fmtRuntime(data.runtimeMinutes));
-      }
-      const countLine = allResults.length
-        ? `${countLabel} on <b>${dateLabel}</b> (${priced} priced) in ${locationDisplay}`
-        : `No showings found within your window on <b>${dateLabel}</b> in ${locationDisplay}`;
-
-      els.statusLine.innerHTML =
-        `<div class="film-hero">` +
-          `<h2 class="film-hero-title">${escapeHtml(data.movie || '')}</h2>` +
-          (metaBits.length ? `<div class="film-hero-meta">${metaBits.join(' &middot; ')}</div>` : '') +
-          (data.ratings ? posterHtml(data.ratings, data.movie, 'hero') : '') +
-          (data.ratings ? ratingsHtml(data.ratings) : '') +
-          `<div class="film-hero-count">${countLine}</div>` +
-        `</div>`;
+      els.statusLine.innerHTML = filmHeroHtml(data, {
+        countLine: allResults.length
+          ? `${countLabel} on <b>${dateLabel}</b> (${priced} priced) in ${locationDisplay}`
+          : `No showings found within your window on <b>${dateLabel}</b> in ${locationDisplay}`,
+      });
     }
 
     // Stinger info only makes sense for a single specific movie, not the
