@@ -68,8 +68,11 @@ deprioritized — confirmed blocked by Regal's bot detection (real 403s in
 the actor's own log). Don't re-add it without new evidence it's unblocked.
 
 `camofox-regal` keeps a **pool** of regmovies.com tabs (`CAMOFOX_TAB_POOL`,
-default 8 -- each is a real Firefox tab on the Camofox host, so lower it if
-that box is memory-tight). A browser tab runs one `evaluate` at a time, so a single tab
+default 4). Each is a real Firefox tab and opening one loads regmovies.com to
+clear Cloudflare, which the Camofox host appears to serialize -- so raising
+this is NOT free. Measured on one real Denver search: 32.5s at 4 tabs, 53.7s
+at 8. Tabs live 20min and are reused, so the open cost only bites a cold pool
+(which a Render redeploy recreates). A browser tab runs one `evaluate` at a time, so a single tab
 serialized every call regardless of caller concurrency: a 5-theater Denver
 search spent ~41s of its 52s on 21 `getTicketsForSession` GETs at ~1.95s each,
 while the same search with Regal off finished in 1.5s. Only GETs are pooled --
@@ -114,9 +117,16 @@ and pushes to Redis fire-and-forget -- never await it on a search path. Set
 everything behaves exactly as before. Entries over 400KB stay local.
 
 Going through it: geocodes (90d), AMC/Harkins/Regal theater lists (24h), drive
-times (30d), IMDb ratings map, and **Regal + Atom showtime listings** (TTL runs
-to midnight, so a morning search's showtimes are reused all day and now survive
-a redeploy). The sync `readDiskCache`/`writeDiskCache` still exist and are
+times (30d), IMDb ratings map, **Regal + Atom showtime listings** (TTL runs to
+midnight, so a morning search's showtimes are reused all day and now survive a
+redeploy), and the **ratings payload** (12h) -- which is where poster URLs live,
+so artwork survives a redeploy too, and OMDb's free 1000/day isn't respent on
+titles already resolved. RT scores ride inside that same payload (they are
+merged before it is cached), so `lib/rt-scores.js` needs no cache of its own.
+
+Cached ratings are stored **wrapped** (`{ value }`) because `null` is a real
+answer meaning "OMDb doesn't have this film" -- an unwrapped null is
+indistinguishable from a cache miss and would be re-asked forever. The sync `readDiskCache`/`writeDiskCache` still exist and are
 local-only -- prefer `readCache`/`writeCache` for anything new.
 
 **Still local-only:** `.overpass-cache.json` and `.serpapi-schedule-cache.json`
@@ -152,6 +162,29 @@ still estimated nothing.
 
 Absurd values are rejected on the way in (<=0, >200) so one bad parse cannot
 become the "learned" price for a theater.
+
+## robots.txt positions taken so far
+
+This project respects robots.txt as a matter of course, and the calls have been
+made explicitly rather than by accident. Recorded so they aren't re-litigated:
+
+- **Rotten Tomatoes** — only `/m/{slug}`; `/search` is disallowed, so a
+  slug that doesn't resolve simply gets no score (see `lib/rt-scores.js`).
+- **Landmark pricing** — `booking.landmarktheatres.com/robots.txt` is
+  `User-agent: * / Disallow: /`, the whole host. Bright Data enforces this and
+  returns HTTP 200 with a `Residential Failed (bad_endpoint)` body, which read
+  as a parse error for several rounds. No provider choice changes it. Landmark
+  **showtimes** come from `www.landmarktheatres.com`, whose robots.txt is empty
+  (unrestricted) -- that half is fine and is why showtimes work.
+- **Atom Tickets** — `/theaters/...` permitted, `/search` and `/checkout`
+  disallowed. `lookupAtomVenue` avoids `/search` deliberately.
+  `getAtomCheckoutPricing` does hit `/checkout`, but the whole Atom path is
+  gated off behind `ENABLE_ATOM_PATH` and is not running; see the note at that
+  flag in `server.js` before re-enabling.
+
+Licensed/permitted sources are the way around these, not a different proxy:
+SerpApi is paid and licensed, and Cinemark pricing runs with Cinemark support's
+explicit permission for personal use.
 
 ## Known gotchas before touching related code
 

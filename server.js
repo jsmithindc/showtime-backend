@@ -3321,6 +3321,16 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
               // no static-HTML or basic-JS-render proxy captures the checkout links.
               // Set ENABLE_ATOM_PATH=true to re-enable the legacy HTML-parse path
               // if a working proxy is available.
+              //
+              // BEFORE RE-ENABLING: this path fetches atomtickets.com/checkout/{id}
+              // for pricing, and Atom's robots.txt carries `Disallow: /checkout`
+              // (verified 2026-09-01). Its `/theaters/...` pages ARE permitted, so
+              // the showtimes half is fine -- it is only the checkout fetch that
+              // isn't. lookupAtomVenue already avoids Atom's disallowed /search for
+              // the same reason, so the intent is established; /checkout looks like
+              // it was simply missed. Solving the AJAX problem would leave that
+              // unresolved, so decide it deliberately rather than by flipping the
+              // flag.
               const ATOM_PATH_ENABLED = process.env.ENABLE_ATOM_PATH === "true";
               let usedAtomPath = false;
               if (ATOM_PATH_ENABLED) try {
