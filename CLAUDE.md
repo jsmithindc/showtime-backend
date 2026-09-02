@@ -249,6 +249,31 @@ generator under `scripts/`:
 If a chain seems to be missing a city, check its list length against the
 chain's own source before assuming an adapter bug.
 
+## IMAX 70mm (15/70) venues
+
+`lib/imax-70mm-venues.js` is a **curated list**, not discovery: 15/70 film
+projection is rare and shrinking, and no API anywhere distinguishes it from
+digital IMAX. `nearestImax70mm()` ranks by straight line, then routes the
+nearest few through `lib/drive-times.js` for a real drive time. It is
+deliberately NOT radius-filtered -- "your nearest is an 8-hour drive" is a
+useful answer for a format with 24 known US venues; "none found" is not.
+Surfaced on `/api/search`'s `done` payload and rendered under the chain report.
+
+**This is not the `IMAX` format chip.** That chip is DIGITAL IMAX, which is what
+every chain adapter reports. Anyone reaching for it expecting film gets the
+wrong thing, which is why the UI spells out "70mm film" and the tooltip says so.
+
+Provenance, because it matters more than the code: the list comes from
+Engadget's 2026 article on where *The Odyssey* plays in true 70mm.
+**imax.com was NOT scraped** -- its robots.txt carries
+`User-agent: ClaudeBot / Disallow: /`. That article names 24 US venues while
+its own text says 30 exist, so treat this as "the venues we can name".
+
+16 of the 24 belong to chains this app already prices (8 Regal, 3 AMC, 4
+Cinemark, 1 Harkins), and those carry exact coordinates from the chain's own
+theater list plus a `chainCode`; the other 8 are geocoded and can be
+city-level. `coordSource` records which, and the tooltip tells the user.
+
 ## Known gotchas before touching related code
 
 - **`start.sh` must never be git-tracked.** It has real, hardcoded API keys

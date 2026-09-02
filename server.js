@@ -4,6 +4,7 @@ const { findNearbyTheaters } = require("./lib/theaters-overpass");
 const { estimatedMinutesAway, prefilterMinutesAway, minutesToMeters } = require("./lib/distance");
 const { getDriveMinutes, isConfigured: driveTimesConfigured } = require("./lib/drive-times");
 const priceModel = require("./lib/price-model");
+const { nearestImax70mm } = require("./lib/imax-70mm-venues");
 const { getVersion } = require("./lib/version");
 const { getPricedShowtimes, getTheaterSchedule } = require("./lib/priceAdapters/serpapi");
 const { resolveCanonicalLocation } = require("./lib/serpapi-location");
@@ -905,6 +906,10 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // result. Year from the search date, so OMDb resolves the film now in
     // theaters rather than a same-titled one from another decade.
     const ratingsPromise = getMovieRatings(movie, Number(searchDateISO.slice(0, 4))).catch(() => null);
+    // Independent of the search entirely -- it depends only on where you are.
+    const imax70Promise = nearestImax70mm({
+      originLat, originLng, limit: 1, getDriveMinutes,
+    }).then((v) => v[0] || null).catch(() => null);
     // Pushed the moment it lands instead of riding along on `done`. This
     // resolves in a few seconds while a full search can take a minute, and the
     // poster is the header of the page -- there is no reason for it to wait on
@@ -2664,6 +2669,12 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
       runtimeMinutes: realRuntimeMin,
       runtimeIsEstimate,
       ratings: await ratingsPromise,
+      // True 15/70 film venues are rare enough (24 known in the US) that the
+      // nearest one is worth knowing regardless of what was searched -- and it
+      // is NOT the same thing as the "IMAX" format chip, which is digital IMAX.
+      // Kicked off alongside discovery and awaited only here, so it never sits
+      // on the critical path; a failure yields null rather than losing `done`.
+      nearestImax70mm: await imax70Promise,
       chainReports: buildChainReports(),
       // Regal's credit usage now lives entirely in /api/search-regal's
       // own response -- this endpoint no longer runs Regal at all, so

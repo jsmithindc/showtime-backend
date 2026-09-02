@@ -502,6 +502,31 @@
      judge for themselves, not that it looks like every other result. */
   .dist-over { color: var(--warn); font-weight: 600; cursor: help; }
 
+  /* Nearest 15/70 film venue. Understated -- it is context, not a result. */
+  .imax70 {
+    margin: 10px 0 4px;
+    padding: 7px 11px;
+    font-size: 12px;
+    color: var(--ink-dim);
+    background: var(--marquee-2);
+    border: 1px solid var(--stub-line);
+    border-radius: 8px;
+    cursor: help;
+  }
+  .imax70 b { color: var(--ink); }
+  .imax70-tag {
+    display: inline-block;
+    margin-right: 7px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--gold-dim);
+    color: #12100e;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+
   #timingBar {
     /* NOT display:none here -- renderTiming() reveals this by setting
        style.display = '', which only overrides an INLINE none. Putting the
@@ -2228,6 +2253,25 @@
 
     // Directly beneath the count line, above the stinger box.
     if (chainReportHtml) els.statusLine.innerHTML += chainReportHtml;
+
+    // Nearest true IMAX 70mm (15/70) venue. Deliberately spelled out as "70mm
+    // film", because the IMAX format chip elsewhere on this page means DIGITAL
+    // IMAX and someone hunting film would otherwise be misled by it.
+    const imax = data.nearestImax70mm;
+    if (imax) {
+      const far = imax.distanceMin > 180;
+      const label = far
+        ? `${Math.round(imax.distanceMin / 60)}h drive`
+        : `${imax.distanceMin} min away`;
+      els.statusLine.innerHTML +=
+        `<div class="imax70" title="True IMAX 70mm (15/70) film projection -- not the same as the digital IMAX format shown on result cards. ${
+          escapeHtml(imax.coordSource === 'geocoded' ? 'Location is approximate (geocoded to the city).' : 'Exact location from the chain\'s own theater list.')
+        }">` +
+          `<span class="imax70-tag">70mm film</span>` +
+          `nearest: <b>${escapeHtml(imax.name)}</b>, ${escapeHtml(imax.city)}, ${escapeHtml(imax.state)} ` +
+          `&middot; ${label}${imax.chain ? '' : ' &middot; not searched (no adapter for this venue)'}` +
+        `</div>`;
+    }
 
     // Stinger info only makes sense for a single specific movie, not the
     // "3 hours to kill" mode (which mixes many different movies) -- and
