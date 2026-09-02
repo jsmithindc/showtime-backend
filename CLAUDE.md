@@ -103,6 +103,27 @@ truth over this summary if the two ever disagree.
 (Cinema West also has a live adapter, `cinemawest-official.js`, not
 requested above but present in `server.js` under `chain: "cinemawest"`.)
 
+## Caching tiers
+
+`lib/disk-cache.js` is the shared store. `readCache(name, ttlMs)` (async) goes
+local file -> Upstash Redis, promoting a Redis hit into the local file with its
+**original** `fetchedAt` so a stale entry can't live forever by hopping
+containers. `writeCache(name, data, ttlMs)` writes the local file synchronously
+and pushes to Redis fire-and-forget -- never await it on a search path. Set
+`UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` to enable; unset,
+everything behaves exactly as before. Entries over 400KB stay local.
+
+Going through it: geocodes (90d), AMC/Harkins/Regal theater lists (24h), drive
+times (30d), IMDb ratings map, and **Regal + Atom showtime listings** (TTL runs
+to midnight, so a morning search's showtimes are reused all day and now survive
+a redeploy). The sync `readDiskCache`/`writeDiskCache` still exist and are
+local-only -- prefer `readCache`/`writeCache` for anything new.
+
+**Still local-only:** `.overpass-cache.json` and `.serpapi-schedule-cache.json`
+keep their own bespoke files and do not go through this. Overpass is the more
+valuable of the two to migrate (it is rate-limited and returns `[]` when
+throttled).
+
 ## Known gotchas before touching related code
 
 - **`start.sh` must never be git-tracked.** It has real, hardcoded API keys

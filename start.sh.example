@@ -92,3 +92,14 @@ node server.js
 #   chmod +x start.sh
 #   ./start.sh
 # start.sh itself is gitignored, so your real keys never get committed.
+
+# ---- Optional: shared cache that survives Render redeploys -------------------
+# Without this, every deploy throws away the local cache directory: theater
+# lists, geocodes, drive times, and the day's already-fetched showtimes all get
+# re-earned on the next search. Upstash's REST API is used (plain HTTPS, no
+# connection pooling), free tier is 10k commands/day -- far more than this
+# needs, since reads are local-first and only miss to Redis once per key per
+# container. Create a database at console.upstash.com and copy both values.
+# Unset = local-file caching only, exactly as before.
+# export UPSTASH_REDIS_REST_URL="https://your-db.upstash.io"
+# export UPSTASH_REDIS_REST_TOKEN="paste-your-rest-token-here"
