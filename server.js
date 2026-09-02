@@ -2526,16 +2526,34 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 
         // One pricing call per theater (use first valid showtime's UUID; prices are per-theater, not per-session).
         const pricingByCode = new Map();
+        const landmarkSkips = [];
         await Promise.all(
           landmarkDirectTheaters.map(async (theater) => {
+            // Every exit here used to be silent, so "pricing resolved for 1
+            // theater(s)" gave no way to tell a real failure from a theater
+            // that simply isn't showing the film -- which is the usual case,
+            // and was mistaken for a bug.
             const firstEntry = landmarkEntries.find((e) => e.cinema.code === theater.code && e.bookingLink);
-            if (!firstEntry) return;
+            if (!firstEntry) {
+              const anySession = landmarkEntries.some((e) => e.cinema.code === theater.code);
+              landmarkSkips.push(
+                anySession
+                  ? `${theater.name}: has sessions but none carry a booking link`
+                  : `${theater.name}: not showing this film`
+              );
+              return;
+            }
             const uuid = firstEntry.bookingLink.split("/").pop();
-            if (!uuid) return;
+            if (!uuid) {
+              landmarkSkips.push(`${theater.name}: booking link had no session id (${firstEntry.bookingLink})`);
+              return;
+            }
             try {
               const tickets = await getLandmarkPricing(uuid);
               if (tickets && tickets.length > 0) pricingByCode.set(theater.code, tickets);
+              else landmarkSkips.push(`${theater.name}: pricing call returned nothing`);
             } catch (err) {
+              landmarkSkips.push(`${theater.name}: ${err.message}`);
               console.error(`Landmark pricing failed for ${theater.code}:`, err.message);
             }
           })
@@ -2567,7 +2585,12 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         }
         console.error(
           `Landmark: fetched ${landmarkEntries.length} session(s) matching "${movie}" on ${searchDateISO} ` +
-          `across ${landmarkDirectTheaters.length} theater(s); pricing resolved for ${pricingByCode.size} theater(s).`
+          `across ${landmarkDirectTheaters.length} theater(s) in range; ` +
+          `${pricingByCode.size} priced` +
+          // Naming the skipped ones matters because the common reason is
+          // completely benign -- an art-house Landmark simply not showing the
+          // film -- and the bare "1 of 2" made that look like a failure.
+          (landmarkSkips.length ? `, ${landmarkSkips.length} skipped (${landmarkSkips.join("; ")})` : "") + "."
         );
       } catch (err) {
         console.error(`Landmark showtime discovery failed:`, err.message);
