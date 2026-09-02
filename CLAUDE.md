@@ -67,6 +67,15 @@ Apify's plain Super Scraper actor (`apify.js`, distinct from
 deprioritized — confirmed blocked by Regal's bot detection (real 403s in
 the actor's own log). Don't re-add it without new evidence it's unblocked.
 
+`camofox-regal` keeps a **pool** of regmovies.com tabs (`CAMOFOX_TAB_POOL`,
+default 4). A browser tab runs one `evaluate` at a time, so a single tab
+serialized every call regardless of caller concurrency: a 5-theater Denver
+search spent ~41s of its 52s on 21 `getTicketsForSession` GETs at ~1.95s each,
+while the same search with Regal off finished in 1.5s. Only GETs are pooled --
+`createOrder` stays on the serialized POST queue, since Cloudflare's limit is
+on POST volume. Set `CAMOFOX_TAB_POOL=1` to restore the old single-tab
+behaviour.
+
 Before touching this chain: re-read the ordering comment at the top of
 `lib/proxyProviders/index.js` — it's kept current and is the source of
 truth over this summary if the two ever disagree.
