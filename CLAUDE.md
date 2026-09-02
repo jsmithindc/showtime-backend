@@ -76,6 +76,15 @@ while the same search with Regal off finished in 1.5s. Only GETs are pooled --
 on POST volume. Set `CAMOFOX_TAB_POOL=1` to restore the old single-tab
 behaviour.
 
+A provider may export **`supports(url)`** to decline requests it structurally
+cannot serve; `fetchWithRotation` skips those without calling them.
+`camofox-regal` and `apify-cfbypass` both declare regmovies.com only, because
+each runs its request as a `fetch()` inside a regmovies.com *page* -- any other
+host is cross-origin and the browser refuses it, surfacing as `evaluate HTTP
+500`. Landmark pricing hit that on every call and spent most of its budget
+before a provider that could do the job was tried. If you add a provider that
+is pinned to one site, give it a `supports()`.
+
 Before touching this chain: re-read the ordering comment at the top of
 `lib/proxyProviders/index.js` — it's kept current and is the source of
 truth over this summary if the two ever disagree.

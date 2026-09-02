@@ -561,7 +561,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.9.0</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.9.1</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1427,9 +1427,24 @@
       // The cap applies to the sorted list, which is why the server sends the
       // number instead of slicing: it streamed these before they were sorted.
       const cap = searchMeta.resultsCap ?? 25;
+      let shown = merged.slice(0, cap);
+      // A chain that priced NOTHING sorts entirely below the cap and disappears
+      // from the page, even though its showings are real and were fetched.
+      // That is what happened to Landmark: 6 sessions, all unpriced, ranked
+      // 80th-85th of 85, cut by a cap of 25 -- indistinguishable from the chain
+      // having found nothing at all. Guarantee each chain its best row.
+      // `merged` is already sorted, so the first row past the cap for a missing
+      // chain IS that chain's best.
+      const shownChains = new Set(shown.map((r) => r.chain));
+      const rescued = [];
+      for (const r of merged.slice(cap)) {
+        if (shownChains.has(r.chain)) continue;
+        shownChains.add(r.chain);
+        rescued.push(r);
+      }
       renderResults({
         ...searchMeta,
-        results: merged.slice(0, cap),
+        results: rescued.length ? shown.concat(rescued) : shown,
         matchingShowings: searchMeta.matchingShowings ?? merged.length,
         chainReports: [...(searchMeta.chainReports || []), ...regalChainReports],
         // `|| {}` matters on the first render: lastRenderOpts starts as null,
