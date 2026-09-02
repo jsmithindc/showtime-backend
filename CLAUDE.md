@@ -271,8 +271,15 @@ its own text says 30 exist, so treat this as "the venues we can name".
 
 16 of the 24 belong to chains this app already prices (8 Regal, 3 AMC, 4
 Cinemark, 1 Harkins), and those carry exact coordinates from the chain's own
-theater list plus a `chainCode`; the other 8 are geocoded and can be
-city-level. `coordSource` records which, and the tooltip tells the user.
+theater list plus a `chainCode`. Of the remaining 8, seven were re-geocoded to
+the venue itself (the street is recorded in `coordSource`); **only Brenden Palms
+14, Las Vegas is still a city centroid** -- it sits inside the Palms Casino
+Resort and three queries returned Concord CA, the wrong casino, and Natick MA.
+
+If you extend the list: requiring a street in the geocoder response is NOT
+enough validation. "TCL Chinese Theatre" first resolved to a bare point on
+Hollywood Boulevard 2.3mi from the building. Require the returned NAME to match
+the venue, and check how far the match moved.
 
 ## Known gotchas before touching related code
 
