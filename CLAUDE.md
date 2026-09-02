@@ -101,6 +101,7 @@ truth over this summary if the two ever disagree.
 | **Cinemark** | `priceAdapters/cinemark-official.js` | Pricing confirmed against a real decoded sample (Century DOCO/XD, Sacramento) with Cinemark support's permission for personal/hobbyist use, but the actual live HTTP request has **never been run** — this sandbox can't reach cinemark.com (robots.txt + no egress). Pulls pricing from a base64 JSON blob (`rawBoxProducts`) embedded in the TicketSeatMap page HTML, not a JSON API. Gate: `DISABLE_CINEMARK_PRICING` env var, default paused-when-unset (checked via `!== "false"`, so it must be the literal string `"false"` to enable). Watch for HTML-entity-encoded `&amp;` in showtime links — must decode before parsing query params or theaterId/showtimeId parsing breaks. |
 | **Regal** | `priceAdapters/regal-scrapedo.js` | Real backend flow (create order → `getTicketsForSession`) reached through the proxy chain above. Response sometimes arrives as rendered HTML with the real JSON sitting in a `<pre>` tag (Scrape.do-specific quirk, unconfirmed whether other providers wrap it the same way) — falls back to direct `JSON.parse` if no `<pre>` found. Only theaters listed in `lib/regal-cinema-map.js`/`lib/regal-theaters-ca.js` get resolved; matching an unmapped OSM theater to a Regal ID now **requires "regal" in the OSM name** before even attempting a distance match (see Gotchas below). Gate: `DISABLE_REGAL_PRICING`. |
 | **Harkins** | `priceAdapters/harkins-official.js` | Discovery (movie catalog + nationwide showtimes-by-date via a Next.js data route) is fully confirmed live. **Real ticket pricing is still unconfirmed** — only one fully-captured pricing response exists (`RequestOrderTotals`), but not the shape of the step before it (`StartTicketingSession`) that actually creates the order. Needs one more real captured response before pricing can be trusted rather than guessed. Runs on the same Vista-family platform as Cinema West (shared `HO########` movie ID convention) but a different product stack (harkins.com + `ticketingservice.harkins.com` + `cmsservice.harkins.com`). The Next.js `{buildId}` in its data-route URL is **not stable** — changes on every site deploy, must be extracted live from the page's own `__NEXT_DATA__`, never hardcoded. |
+| **Landmark** | `priceAdapters/landmark-official.js` | Pricing **confirmed live** (Greenwood Village $12.25+$2.99 fee = $15.24; Mayan $14.74). Vista/Movio "cinema-ui" platform — same family as Regal/Cinema West/Harkins. Showtimes from `www.landmarktheatres.com` (gatsby-source-boxofficeapi); pricing from `POST booking.landmarktheatres.com/api/launch/ticketing/{uuid}`. **It must be a POST** — the booking host is a Vite SPA that answers every GET with the 723-byte app shell, which is why this looked like "response is not valid JSON" for so long. Direct fetch, no proxy (reachable in ~0.5s, no Cloudflare). Response repeats each ticket type once per seating area, so dedupe by name+price. |
 | **Regency** | `priceAdapters/regency-official.js` | Runs on "Mobile Moviegoing," a plain PHP platform — genuinely different stack from the Vista-family chains (Regal/Cinema West/Harkins). Pricing (`getSeatData.php` → `ticketClassArray`) is confirmed live, but requires already knowing a `perf` (performance) ID — **there is still no confirmed discovery endpoint** for finding performance IDs from a movie/theater/date; the showtimes listing is presumed server-rendered into theater/movie page HTML rather than a separate API, but a direct page fetch got a 405 from this project's sandbox. Ticket-type naming is unusual: types are named after the day ("Tuesday") rather than "Adult"; filter by excluding `bonus: true` (loyalty tier) rather than by age-keyword. Requires per-theater cookies (`visitID`, `hasSeenPopup`, `siteID` matching the specific theater's `seatsSiteId`) — a bare/static cookie silently gets "Error loading showtimes." with no other error signal. |
 
 (Cinema West also has a live adapter, `cinemawest-official.js`, not
@@ -170,12 +171,14 @@ made explicitly rather than by accident. Recorded so they aren't re-litigated:
 
 - **Rotten Tomatoes** — only `/m/{slug}`; `/search` is disallowed, so a
   slug that doesn't resolve simply gets no score (see `lib/rt-scores.js`).
-- **Landmark pricing** — `booking.landmarktheatres.com/robots.txt` is
-  `User-agent: * / Disallow: /`, the whole host. Bright Data enforces this and
-  returns HTTP 200 with a `Residential Failed (bad_endpoint)` body, which read
-  as a parse error for several rounds. No provider choice changes it. Landmark
-  **showtimes** come from `www.landmarktheatres.com`, whose robots.txt is empty
-  (unrestricted) -- that half is fine and is why showtimes work.
+- **Landmark** — `booking.landmarktheatres.com/robots.txt` is
+  `User-agent: * / Disallow: /`, the whole host, but Landmark's own developer
+  support has confirmed personal/hobbyist use is acceptable (same footing as
+  Cinemark), so pricing runs. It goes **direct, not through the proxy chain**:
+  Bright Data enforces robots.txt regardless of that permission and answers
+  HTTP 200 with a `Residential Failed (bad_endpoint)` body, which read as a
+  parse error for several rounds. Showtimes come from
+  `www.landmarktheatres.com`, whose robots.txt is empty (unrestricted).
 - **Atom Tickets** — `/theaters/...` permitted, `/search` and `/checkout`
   disallowed. `lookupAtomVenue` avoids `/search` deliberately.
   `getAtomCheckoutPricing` does hit `/checkout`, but the whole Atom path is
