@@ -68,7 +68,8 @@ deprioritized — confirmed blocked by Regal's bot detection (real 403s in
 the actor's own log). Don't re-add it without new evidence it's unblocked.
 
 `camofox-regal` keeps a **pool** of regmovies.com tabs (`CAMOFOX_TAB_POOL`,
-default 4). A browser tab runs one `evaluate` at a time, so a single tab
+default 8 -- each is a real Firefox tab on the Camofox host, so lower it if
+that box is memory-tight). A browser tab runs one `evaluate` at a time, so a single tab
 serialized every call regardless of caller concurrency: a 5-theater Denver
 search spent ~41s of its 52s on 21 `getTicketsForSession` GETs at ~1.95s each,
 while the same search with Regal off finished in 1.5s. Only GETs are pooled --

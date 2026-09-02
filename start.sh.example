@@ -68,9 +68,10 @@ export CAMOFOX_URL="https://camofox.yourdomain.com"
 export CAMOFOX_USER_ID="paste-your-chosen-user-id-here"
 export CAMOFOX_SESSION_KEY="paste-your-chosen-session-key-here"
 # How many Camofox tabs may be open at once. A tab runs one evaluate at a
-# time, so this is the parallelism of Regal ticket pricing. 1 = pre-v6.9
-# behaviour (fully serialized). Default 4.
-# export CAMOFOX_TAB_POOL=4
+# time, so this is the parallelism of Regal ticket pricing. Each tab is a real
+# Firefox tab on the Camofox host -- lower this if that box is memory-tight.
+# 1 = pre-v6.9 behaviour (fully serialized). Default 8.
+# export CAMOFOX_TAB_POOL=8
 export DISABLE_REGAL_PRICING="false"  # set to "true" to pause Regal/Scrape.do pricing again
 export DISABLE_CINEMARK_PRICING="false"  # set to "true" to pause Cinemark direct pricing
 # Cinema West (Country Club Cinema) fetches its own access token live --
