@@ -88,6 +88,17 @@ otherwise costs a full `openTab` round trip per request before falling through
 a host that had already returned 500 three times. The pool amplifies this
 rather than helping, since more tabs means more independent opens to fail.
 
+**The Camofox host is memory-constrained and its browser does crash.** Measured
+during that outage: 1.2G resident, 1.9G peak, 1.9G swap peak, and the service
+log shows `browser closed` -> `launching camoufox` -> `browser restart`
+mid-search. Tabs are Firefox content processes, so pool size and tab lifetime
+are memory decisions, not just latency ones. Hence `TAB_TTL_MS` is 5 minutes
+(the pool is there to amortise opens across ONE search, not across the evening)
+and a reaper sweeps idle tabs every 60s -- before that, an expired tab was only
+closed when the NEXT request happened to pick it up, so a single search left its
+whole pool resident indefinitely. If that box gets tight, lower
+`CAMOFOX_TAB_POOL` before anything else.
+
 A provider may export **`supports(url)`** to decline requests it structurally
 cannot serve; `fetchWithRotation` skips those without calling them.
 `camofox-regal` and `apify-cfbypass` both declare regmovies.com only, because
