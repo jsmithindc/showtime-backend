@@ -189,6 +189,26 @@ Licensed/permitted sources are the way around these, not a different proxy:
 SerpApi is paid and licensed, and Cinemark pricing runs with Cinemark support's
 explicit permission for personal use.
 
+## Versioning
+
+**CalVer, resolved automatically — do not hand-edit a version anywhere.**
+`lib/version.js` resolves it once at boot as the commit date of the deployed
+code (`2026.09.02`), served from `GET /api/version`, and the frontend fills
+`#versionBadge` from that. Resolution order: `APP_VERSION` env override ->
+git commit date -> `package.json` version (a last-resort constant, kept
+semver-valid for npm so it is written `2026.9.1` without zero-padding).
+
+Semver was dropped because nothing depends on this app: with no compatibility
+contract to signal, the major/minor/patch split carried no information and the
+digit-cap convention turned the major into a plain overflow counter. The badge
+now answers the only two questions it ever really answered -- what is deployed,
+and how old is it.
+
+Consequence worth knowing: **the version changes by itself when you commit.**
+There is nothing to remember and nothing to bump. If the badge renders empty,
+`/api/version` failed -- that is deliberate, since a blank badge is honest and
+a stale hardcoded one is not.
+
 ## Known gotchas before touching related code
 
 - **`start.sh` must never be git-tracked.** It has real, hardcoded API keys

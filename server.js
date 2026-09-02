@@ -4,6 +4,7 @@ const { findNearbyTheaters } = require("./lib/theaters-overpass");
 const { estimatedMinutesAway, prefilterMinutesAway, minutesToMeters } = require("./lib/distance");
 const { getDriveMinutes, isConfigured: driveTimesConfigured } = require("./lib/drive-times");
 const priceModel = require("./lib/price-model");
+const { getVersion } = require("./lib/version");
 const { getPricedShowtimes, getTheaterSchedule } = require("./lib/priceAdapters/serpapi");
 const { resolveCanonicalLocation } = require("./lib/serpapi-location");
 const { getPricedShowtimes: getRegalPricedShowtimes, getShowtimesForTheater: getRegalShowtimesForTheater, getCachedShowtimesForTheater: getCachedRegalShowtimes, makeCartProvider: makeRegalCartProvider } = require("./lib/priceAdapters/regal-scrapedo");
@@ -139,6 +140,14 @@ function searchRateLimiter(req, res, next) {
 }
 
 app.use(express.static("public"));
+
+// Served rather than hand-typed into the HTML. The badge's only job is to say
+// what is actually deployed, and a number someone has to remember to edit
+// stops doing that the first time it is forgotten -- see lib/version.js.
+app.get("/api/version", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json(getVersion());
+});
 
 // SerpApi's showtimes results don't reliably include runtime, so this is
 // a fixed assumption rather than per-movie data. Update it per movie, or

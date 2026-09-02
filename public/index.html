@@ -565,7 +565,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">7.1.0</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;" title="deployed version"></span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1210,6 +1210,23 @@
   }
   els.place.addEventListener('blur', onPlaceCommit);
   els.place.addEventListener('keydown', (e) => { if (e.key === 'Enter') onPlaceCommit(); });
+
+  // The badge reports what the SERVER says is deployed, not a number baked into
+  // this file. Left blank until the answer arrives -- an empty badge is honest,
+  // a stale hardcoded one is not.
+  (async () => {
+    try {
+      const res = await fetch('/api/version');
+      if (!res.ok) return;
+      const { version, commit } = await res.json();
+      const el = document.getElementById('versionBadge');
+      if (!el || !version) return;
+      el.textContent = version;
+      if (commit) el.title = `deployed version ${version} (${commit})`;
+    } catch {
+      // Offline or the endpoint is missing -- leave it blank rather than lying.
+    }
+  })();
 
   function fmtTime24to12(hhmmss) {
     if (!hhmmss) return '';
