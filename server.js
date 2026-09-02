@@ -4,7 +4,7 @@ const { findNearbyTheaters } = require("./lib/theaters-overpass");
 const { estimatedMinutesAway, prefilterMinutesAway, minutesToMeters } = require("./lib/distance");
 const { getDriveMinutes, isConfigured: driveTimesConfigured } = require("./lib/drive-times");
 const priceModel = require("./lib/price-model");
-const { nearestImax70mm } = require("./lib/imax-70mm-venues");
+const { nearestImax70mm, IMAX_70MM_VENUES, isImax70mmRelease } = require("./lib/imax-70mm-venues");
 const { getVersion } = require("./lib/version");
 const { getPricedShowtimes, getTheaterSchedule } = require("./lib/priceAdapters/serpapi");
 const { resolveCanonicalLocation } = require("./lib/serpapi-location");
@@ -145,6 +145,85 @@ app.use(express.static("public"));
 // Served rather than hand-typed into the HTML. The badge's only job is to say
 // what is actually deployed, and a number someone has to remember to edit
 // stops doing that the first time it is forgotten -- see lib/version.js.
+// "Which is my nearest IMAX 70mm?" and "which is nearest that's showing X?"
+//
+// A QUERY, not a banner. It used to render on every search, which is noise:
+// where your nearest 15/70 screen is doesn't change between searches, and only
+// a handful of releases ever get a 70mm print. Both forms are user-initiated.
+//
+// Deliberately ignores radiusMin. Someone asking this will drive further than
+// they would for an ordinary showing -- that is the whole point of asking --
+// so capping at the search radius would answer the wrong question.
+app.get("/api/imax-70mm", async (req, res) => {
+  const { lat, lng, movie, date } = req.query;
+  const originLat = Number(lat), originLng = Number(lng);
+  if (!Number.isFinite(originLat) || !Number.isFinite(originLng)) {
+    return res.status(400).json({ error: "lat and lng are required" });
+  }
+  const dateISO = /^\d{4}-\d{2}-\d{2}$/.test(String(date || "")) ? date : new Date().toISOString().slice(0, 10);
+
+  try {
+    // Every venue, nearest first -- no radius filter.
+    const venues = await nearestImax70mm({
+      originLat, originLng, limit: IMAX_70MM_VENUES.length, getDriveMinutes,
+    });
+
+    if (!movie) return res.json({ dateISO, movie: null, venues });
+
+    // Film-specific: ask the chains we have adapters for whether that title is
+    // playing at each venue. Harkins answers nationwide in ONE call, so it is
+    // fetched once rather than per venue.
+    const harkinsAll = venues.some((v) => v.chain === "harkins")
+      ? await getHarkinsShowtimesForMovie({ movieTitle: movie, dateISO }).catch(() => [])
+      : [];
+
+    await Promise.all(venues.map((v) => priceLimit(async () => {
+      v.checked = false;
+      try {
+        if (v.chain === "amc" && v.chainCode) {
+          const st = await getAmcShowtimesForTheater({ theatreId: v.chainCode, dateISO });
+          v.checked = true;
+          v.showings = (st || []).filter((x) => matchesMovie(x.movieName, movie))
+            .map((x) => ({ time: x.startTime || x.time, format: x.format }));
+        } else if (v.chain === "regal" && v.chainCode) {
+          const perfs = await getRegalShowtimesForTheater({ cinemaCode: v.chainCode, dateISO });
+          v.checked = true;
+          v.showings = (perfs || []).filter((x) => matchesMovie(x.movieName, movie))
+            .map((x) => ({ time: x.startTimeRaw || x.time, format: x.format }));
+        } else if (v.chain === "harkins" && v.chainCode) {
+          v.checked = true;
+          // theatreId (British spelling) is Harkins' own field name, and it is
+          // a NUMBER. Comparing against a missing chainCode previously made
+          // every one of the 188 nationwide performances "match" this venue.
+          v.showings = (harkinsAll || [])
+            .filter((x) => String(x.theatreId) === String(v.chainCode))
+            .map((x) => ({ time: (x.showtimeOffset || "").slice(11, 16), format: x.format }));
+        } else {
+          // Cinemark's showtimes API is movie-scoped rather than theater-scoped,
+          // and the 8 non-chain venues (museums, independents) have no adapter
+          // at all -- so those are reported as unchecked rather than as "no
+          // showings", which would be a different and wrong claim.
+          v.showings = null;
+        }
+      } catch (err) {
+        v.checked = false;
+        v.error = err.message;
+      }
+    })));
+
+    const withFilm = venues.filter((v) => v.showings && v.showings.length);
+    console.error(
+      `IMAX 70mm lookup for "${movie}": ${venues.length} venue(s), ` +
+      `${venues.filter((v) => v.checked).length} checked, ${withFilm.length} showing it` +
+      (withFilm.length ? ` (nearest: ${withFilm[0].name}, ${withFilm[0].distanceMin}min)` : "")
+    );
+    res.json({ dateISO, movie, venues });
+  } catch (err) {
+    console.error("IMAX 70mm lookup failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/version", (req, res) => {
   res.set("Cache-Control", "no-store");
   res.json(getVersion());
@@ -907,9 +986,17 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // theaters rather than a same-titled one from another decade.
     const ratingsPromise = getMovieRatings(movie, Number(searchDateISO.slice(0, 4))).catch(() => null);
     // Independent of the search entirely -- it depends only on where you are.
-    const imax70Promise = nearestImax70mm({
-      originLat, originLng, limit: 1, getDriveMinutes,
-    }).then((v) => v[0] || null).catch(() => null);
+    // Only looked up when the searched film actually has a 70mm print. The
+    // chains cannot tell us this -- AMC reports "IMAX at AMC" for a 15/70 print
+    // and a digital laser show alike -- so it comes from a curated release
+    // list, which fails quiet (an unlisted film gets no notice) rather than
+    // claiming something untrue.
+    const imax70Release = isImax70mmRelease(movie);
+    const imax70Promise = imax70Release
+      ? nearestImax70mm({ originLat, originLng, limit: 1, getDriveMinutes })
+          .then((v) => (v[0] ? { ...v[0], release: imax70Release } : null))
+          .catch(() => null)
+      : Promise.resolve(null);
     // Pushed the moment it lands instead of riding along on `done`. This
     // resolves in a few seconds while a full search can take a minute, and the
     // poster is the header of the page -- there is no reason for it to wait on
@@ -2532,66 +2619,66 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         // One pricing call per theater (use first valid showtime's UUID; prices are per-theater, not per-session).
         const pricingByCode = new Map();
         const landmarkSkips = [];
-        await Promise.all(
-          landmarkDirectTheaters.map(async (theater) => {
-            // Every exit here used to be silent, so "pricing resolved for 1
-            // theater(s)" gave no way to tell a real failure from a theater
-            // that simply isn't showing the film -- which is the usual case,
-            // and was mistaken for a bug.
-            const firstEntry = landmarkEntries.find((e) => e.cinema.code === theater.code && e.bookingLink);
-            if (!firstEntry) {
-              const anySession = landmarkEntries.some((e) => e.cinema.code === theater.code);
-              landmarkSkips.push(
-                anySession
-                  ? `${theater.name}: has sessions but none carry a booking link`
-                  : `${theater.name}: not showing this film`
-              );
-              return;
-            }
-            const uuid = firstEntry.bookingLink.split("/").pop();
-            if (!uuid) {
-              landmarkSkips.push(`${theater.name}: booking link had no session id (${firstEntry.bookingLink})`);
-              return;
-            }
-            try {
-              const tickets = await getLandmarkPricing(uuid);
-              if (tickets && tickets.length > 0) pricingByCode.set(theater.code, tickets);
-              else landmarkSkips.push(`${theater.name}: pricing call returned nothing`);
-            } catch (err) {
-              landmarkSkips.push(`${theater.name}: ${err.message}`);
-              console.error(`Landmark pricing failed for ${theater.code}:`, err.message);
-            }
-          })
-        );
-
+        // Price PER SHOWING, not per theater. Landmark's prices genuinely vary
+        // within a day -- its own ticket names say so ("Bargain Tues & Weds
+        // Before 6pm" $15.24 vs "Adult Tues & Weds after 6pm" $18.49) -- so
+        // pricing one session and reusing it across the theater displayed the
+        // wrong number for every other daypart.
+        //
+        // Worse, it priced the FIRST session, and a session that has already
+        // started returns no ticket types at all. One stale matinee therefore
+        // zeroed out the whole theater even when the evening showings the user
+        // asked for priced fine. That is exactly what "pricing resolved for 0
+        // theater(s)" meant on a live search whose 18:30 showing was $18.49.
+        //
+        // Only in-window showings are priced, so this is often FEWER calls than
+        // before, not more -- past matinees are never asked about.
+        const landmarkBuilt = [];
         for (const entry of landmarkEntries) {
-          const tickets = pricingByCode.get(entry.cinema.code);
-          const cheapest = tickets?.[0] ?? null;
           const built = buildResultIfWithinWindow({
             theaterName: entry.cinema.name,
             distanceMin: entry.cinema.distanceMin,
             startTimeRaw: entry.startTimeRaw,
             format: entry.format,
-            price: cheapest ? cheapest.totalDollars : null,
-            priceSource: cheapest ? "landmark-official" : null,
+            price: null,
+            priceSource: null,
             bookingLink: entry.bookingLink,
             chain: "landmark",
           });
-          if (built) {
-            // Alternate ticket types (Child, Senior, etc.) shown like AMC Stubs secondary prices.
-            if (tickets && tickets.length > 1) {
-              built.landmarkAlternatePrices = tickets.slice(1).map((t) => ({
-                label: t.displayName,
-                total: t.totalDollars,
-              }));
-            }
-            addResult(built);
-          }
+          if (built) landmarkBuilt.push({ built, entry });
         }
+
+        await Promise.all(landmarkBuilt.map(({ built, entry }) => priceLimit(async () => {
+          if (aborted) return;
+          const uuid = entry.bookingLink ? entry.bookingLink.split("/").pop() : null;
+          if (!uuid) { landmarkSkips.push(`${entry.cinema.name} ${entry.startTimeRaw}: no session id`); return; }
+          try {
+            const tickets = await getLandmarkPricing(uuid);
+            if (!tickets || !tickets.length) {
+              landmarkSkips.push(`${entry.cinema.name} ${entry.startTimeRaw}: no ticket types returned`);
+              return;
+            }
+            built.price = tickets[0].totalDollars;
+            built.priceSource = "landmark-official";
+            built.priceBeforeFee = tickets[0].priceDollars;
+            built.estimatedFee = tickets[0].bookingFeeDollars;
+            built.feeStatus = "confirmed";
+            built.ticketTypeName = tickets[0].displayName;
+            if (tickets.length > 1) {
+              built.landmarkAlternatePrices = tickets.slice(1).map((t) => ({ label: t.displayName, total: t.totalDollars }));
+            }
+            pricingByCode.set(entry.cinema.code, tickets);
+          } catch (err) {
+            landmarkSkips.push(`${entry.cinema.name} ${entry.startTimeRaw}: ${err.message}`);
+          }
+        })));
+
+        for (const { built } of landmarkBuilt) addResult(built);
+
         console.error(
           `Landmark: fetched ${landmarkEntries.length} session(s) matching "${movie}" on ${searchDateISO} ` +
           `across ${landmarkDirectTheaters.length} theater(s) in range; ` +
-          `${pricingByCode.size} priced` +
+          `${landmarkBuilt.filter((x) => x.built.price != null).length}/${landmarkBuilt.length} in-window showing(s) priced` +
           // Naming the skipped ones matters because the common reason is
           // completely benign -- an art-house Landmark simply not showing the
           // film -- and the bare "1 of 2" made that look like a failure.

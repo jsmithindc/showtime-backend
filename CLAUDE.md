@@ -259,6 +259,22 @@ deliberately NOT radius-filtered -- "your nearest is an 8-hour drive" is a
 useful answer for a format with 24 known US venues; "none found" is not.
 Surfaced on `/api/search`'s `done` payload and rendered under the chain report.
 
+**The notice does not appear on every search.** It is gated on
+`isImax70mmRelease(movie)`, a curated list of films with an actual 70mm print,
+because the chains cannot tell us: AMC reports `"IMAX at AMC"` for a 15/70
+print and a digital laser show alike (verified live at Lincoln Square, whose
+only formats are `IMAX at AMC`, `Dolby Cinema at AMC`, `Standard`). The list
+fails quiet -- an unlisted film gets no notice rather than a wrong one -- so
+add releases as 70mm runs are announced.
+
+The standing "where is my nearest one" question is answered on demand by
+`GET /api/imax-70mm?lat=&lng=[&movie=]`, which **ignores radiusMin** (someone
+asking will drive further than for an ordinary showing) and, given a movie,
+checks the chain-backed venues for showings. AMC/Regal/Harkins are checkable;
+Cinemark's API is movie-scoped and the 8 non-chain venues have no adapter, so
+those report `checked: false` rather than "no showings", which would be a
+different and wrong claim.
+
 Four venues carry **firsthand seating notes** (`seating: { best, good,
 tooClose, note }`), shown under the venue line. Row letters are per-venue and
 do NOT transfer -- row F is solid at the Esquire and too close at CityWalk --

@@ -514,6 +514,9 @@
     cursor: help;
   }
   .imax70 b { color: var(--ink); }
+  /* Promoted: a 70mm print is actually playing, which is the rare case this
+     whole feature exists for. */
+  .imax70-live { border-color: var(--gold); background: rgba(226,165,69,0.10); }
   .imax70-seats { margin-top: 5px; font-size: 11px; color: var(--ink-dim); opacity: .95; }
   .imax70-seats b { color: var(--gold); }
   .imax70-tag {
@@ -761,9 +764,10 @@
   <div class="status-line" id="statusLine"></div>
   <div id="banners"></div>
   <div id="results"></div>
-  <!-- Diagnostics, not a headline. Sits after the results and is styled down to
-       footnote weight: useful to the person running this, uninteresting to
-       anyone else looking for a showtime. -->
+  <!-- Reference material, not headlines: the chain report and (usually) the
+       70mm venue note live here with the timings. Useful to whoever runs this,
+       uninteresting to someone who just wants a showtime. -->
+  <div id="pageFooter"></div>
   <div id="timingBar" style="display:none;"></div>
 </div>
 
@@ -787,6 +791,7 @@
     movieFreeText: document.getElementById('movieFreeText'),
     searchBtn: document.getElementById('searchBtn'),
     statusLine: document.getElementById('statusLine'),
+    pageFooter: document.getElementById('pageFooter'),
     banners: document.getElementById('banners'),
     results: document.getElementById('results'),
   };
@@ -1336,6 +1341,7 @@
     const _timingBar = document.getElementById('timingBar');
     if (_timingBar) _timingBar.style.display = 'none';
     els.banners.innerHTML = '';
+    if (els.pageFooter) els.pageFooter.innerHTML = '';
     els.results.innerHTML = '';
     earlyShowingsExpanded = false; // a new search starts collapsed
     activeResultFormats = new Set(); seenResultFormats = new Set(); // fresh search -- reset to "all formats on"
@@ -1682,6 +1688,7 @@
     const hours = parseFloat(els.availableForHours.value);
 
     els.banners.innerHTML = '';
+    if (els.pageFooter) els.pageFooter.innerHTML = '';
     els.results.innerHTML = '';
     earlyShowingsExpanded = false; // a new search starts collapsed
     activeResultFormats = new Set(); seenResultFormats = new Set(); // fresh search -- reset to "all formats on"
@@ -2253,24 +2260,32 @@
       });
     }
 
-    // Directly beneath the count line, above the stinger box.
-    if (chainReportHtml) els.statusLine.innerHTML += chainReportHtml;
+    // Footer, not the header: both of these are reference material about the
+    // search rather than part of the answer.
+    const footerParts = [];
+    if (chainReportHtml) footerParts.push(chainReportHtml);
 
     // Nearest true IMAX 70mm (15/70) venue. Deliberately spelled out as "70mm
     // film", because the IMAX format chip elsewhere on this page means DIGITAL
     // IMAX and someone hunting film would otherwise be misled by it.
+    // The server only sends this when the searched film actually has a 70mm
+    // print (see isImax70mmRelease). It is therefore always worth featuring --
+    // the "where's my nearest one" question is answered on demand instead, via
+    // /api/imax-70mm, because that answer is the same for every search and was
+    // pure noise on the 99% of films with no 70mm run.
     const imax = data.nearestImax70mm;
     if (imax) {
       const far = imax.distanceMin > 180;
       const label = far
         ? `${Math.round(imax.distanceMin / 60)}h drive`
         : `${imax.distanceMin} min away`;
-      els.statusLine.innerHTML +=
-        `<div class="imax70" title="True IMAX 70mm (15/70) film projection -- not the same as the digital IMAX format shown on result cards. ${
+      const imaxHtml =
+        `<div class="imax70 imax70-live" title="True IMAX 70mm (15/70) film projection -- not the same as the digital IMAX format shown on result cards. ${
           escapeHtml(imax.coordSource === 'geocoded' ? 'Location is approximate (geocoded to the city).' : 'Exact location from the chain\'s own theater list.')
         }">` +
           `<span class="imax70-tag">70mm film</span>` +
-          `nearest: <b>${escapeHtml(imax.name)}</b>, ${escapeHtml(imax.city)}, ${escapeHtml(imax.state)} ` +
+          `<b>${escapeHtml(data.movie || 'This film')}</b> has a 70mm print. Nearest 15/70 screen: ` +
+          `<b>${escapeHtml(imax.name)}</b>, ${escapeHtml(imax.city)}, ${escapeHtml(imax.state)} ` +
           `&middot; ${label}${imax.chain ? '' : ' &middot; not searched (no adapter for this venue)'}` +
           // Firsthand seating note, where one exists. Shown rather than buried
           // in a tooltip: it is the kind of thing you want BEFORE booking, and
@@ -2286,7 +2301,9 @@
               `</div>`
             : '') +
         `</div>`;
+      els.statusLine.innerHTML += imaxHtml;
     }
+    els.pageFooter.innerHTML = footerParts.join('');
 
     // Stinger info only makes sense for a single specific movie, not the
     // "3 hours to kill" mode (which mixes many different movies) -- and
