@@ -280,10 +280,13 @@ Hollywood Boulevard 2.3mi from the building, and Brenden Palms to the wrong
 plaza on the right street -- both have street addresses. Require the returned
 NAME to match the venue, and check how far the match moved.
 
-Conversely, a street string is not automatically better than a named match:
-the Museum of Discovery's postal address (401 SW 2nd St) geocodes to 401 SW 2nd
-AVENUE, 0.4mi away, so that entry deliberately keeps its named match on 401
-Himmarshee Street -- the historic name for the same road.
+Conversely, a street string is not automatically better than a named match.
+The Museum of Discovery's published address (401 SW 2nd St, ZIP 33312)
+geocodes to 401 SW 2nd AVENUE in ZIP 33301 -- wrong road, wrong postal area --
+while the stored coordinate reverse-geocodes to the museum by name at 401
+Himmarshee Street in 33312, the historic name for the same road. **Reverse-
+geocoding is the check that settles these**: it tells you what is actually at
+the point, and a matching ZIP is strong confirmation.
 
 ## Known gotchas before touching related code
 
