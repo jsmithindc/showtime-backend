@@ -441,13 +441,31 @@
      header and can be larger still. */
   .poster-hero { width: 132px; aspect-ratio: 2 / 3; }
 
-  .summary-head { display: flex; gap: 14px; align-items: flex-start; margin-top: 10px; }
-  .summary-head .ratings { margin-bottom: 0; }
+  /* Movie mode header, laid out like a title page: name, then year/runtime,
+     then the artwork at a size worth looking at, then scores, then the count.
+     Replaces the old side-by-side summary-head, where a 132px poster next to a
+     single row of scores left the artwork reading as an icon. */
+  .film-hero { margin: 0 0 18px; }
+  .film-hero-title {
+    font-size: clamp(28px, 5.5vw, 44px);
+    font-weight: 800;
+    line-height: 1.04;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    margin: 0 0 6px;
+  }
+  .film-hero-meta { font-size: 15px; color: var(--ink-dim); margin: 0 0 14px; }
+  /* Overrides .poster-hero's card-sized width -- here it is the header. */
+  .film-hero .poster-hero { width: min(260px, 64%); height: auto; border-radius: 10px; display: block; margin: 0 0 12px; }
+  .film-hero .ratings { margin: 0 0 10px; }
+  .film-hero-count { font-size: 13px; color: var(--ink-dim); }
+  .film-hero-count b { color: var(--gold); }
 
   /* Narrow screens: keep the poster meaningful but give the text room. */
   @media (max-width: 480px) {
     .poster-thumb { width: 60px; }
     .poster-hero { width: 104px; }
+    .film-hero .poster-hero { width: min(240px, 80%); }
   }
 
   .ratings { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 6px; }
@@ -543,7 +561,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.7.1</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.8.0</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1956,20 +1974,6 @@
       ? `that fit between <b>${fmtTime24to12(data.availableFrom)}</b> and <b>${fmtTime24to12(data.availableUntil)}</b>`
       : `of <b>${data.movie}</b>`;
 
-    // Only meaningful for a single-movie search -- window-search mode
-    // mixes many different movies with their own separate runtimes, so
-    // there's no one number to show there.
-    // When no real runtime source answered, the number is a hardcoded guess --
-    // and it's the number every "Done by ..." time and the whole deadline
-    // filter are computed from. Showing it identically to a real runtime made
-    // a guess look like fact, which is the wrong way round for the one thing
-    // this app promises. Say so, and explain what it affects.
-    const runtimeLabel = !opts.showMovieName && data.runtimeMinutes
-      ? (data.runtimeIsEstimate
-          ? ` <span style="color:var(--ink-dim); font-weight:400;" title="No runtime data was available for this film, so end times and the deadline filter use a ${fmtRuntime(data.runtimeMinutes)} assumption. Actual end times may be later.">(~${fmtRuntime(data.runtimeMinutes)}, estimated)</span>`
-          : ` <span style="color:var(--ink-dim); font-weight:400;">(${fmtRuntime(data.runtimeMinutes)})</span>`)
-      : '';
-
     const dateLabel = (() => {
       if (!data.searchDate) return '?';
       const [y, m, d] = data.searchDate.split('-').map(Number);
@@ -1983,25 +1987,46 @@
       const parts = data.locationResolved.split(',').map((s) => s.trim()).filter((s) => s && s !== 'United States');
       return parts.length >= 2 ? `${parts[0]}, ${parts[parts.length - 1]}` : parts.join(', ') || data.locationResolved;
     })();
-    els.statusLine.innerHTML = allResults.length
-      ? `${countLabel} ${subjectLabel}${runtimeLabel} on <b>${dateLabel}</b> (${priced} priced). Location resolved to: ${locationDisplay}`
-      : `No ${opts.showMovieName ? 'movies fit that window' : `showings of <b>${data.movie}</b>${runtimeLabel} found within your window`} on <b>${dateLabel}</b>. Location resolved to: ${locationDisplay}`;
+    if (opts.showMovieName) {
+      // Window mode mixes many films, so there is no single title to head the
+      // page with -- it keeps the one-line summary.
+      els.statusLine.innerHTML = allResults.length
+        ? `${countLabel} ${subjectLabel} on <b>${dateLabel}</b> (${priced} priced). Location resolved to: ${locationDisplay}`
+        : `No movies fit that window on <b>${dateLabel}</b>. Location resolved to: ${locationDisplay}`;
+    } else {
+      // Movie mode: one film for the whole search, so it gets a title-page
+      // header. The film's name moves out of the sentence and into a heading,
+      // which is why the count line below reads "5 showings on ..." rather than
+      // repeating "showings of <movie>".
+      //
+      // Year comes from the ratings match, not the search date -- a re-release
+      // or a late-December film would otherwise be labelled with the wrong one.
+      const metaBits = [];
+      if (data.ratings && data.ratings.year) metaBits.push(escapeHtml(String(data.ratings.year)));
+      if (data.runtimeMinutes) {
+        metaBits.push(data.runtimeIsEstimate
+          ? `<span title="No runtime data was available for this film, so end times and the deadline filter use a ${fmtRuntime(data.runtimeMinutes)} assumption. Actual end times may be later.">~${fmtRuntime(data.runtimeMinutes)}, estimated</span>`
+          : fmtRuntime(data.runtimeMinutes));
+      }
+      const countLine = allResults.length
+        ? `${countLabel} on <b>${dateLabel}</b> (${priced} priced) in ${locationDisplay}`
+        : `No showings found within your window on <b>${dateLabel}</b> in ${locationDisplay}`;
+
+      els.statusLine.innerHTML =
+        `<div class="film-hero">` +
+          `<h2 class="film-hero-title">${escapeHtml(data.movie || '')}</h2>` +
+          (metaBits.length ? `<div class="film-hero-meta">${metaBits.join(' &middot; ')}</div>` : '') +
+          (data.ratings ? posterHtml(data.ratings, data.movie, 'hero') : '') +
+          (data.ratings ? ratingsHtml(data.ratings) : '') +
+          `<div class="film-hero-count">${countLine}</div>` +
+        `</div>`;
+    }
 
     // Stinger info only makes sense for a single specific movie, not the
     // "3 hours to kill" mode (which mixes many different movies) -- and
     // only worth showing at all when MediaStinger actually had info,
     // since "we don't know" isn't useful to surface every time.
     const stinger = data.mediaStinger;
-    // Movie mode has ONE film, so its scores go in the summary rather than
-    // being repeated identically on every card.
-    if (!opts.showMovieName && data.ratings) {
-      const row = ratingsHtml(data.ratings);
-      const art = posterHtml(data.ratings, data.movie, 'hero');
-      if (row || art) {
-        els.statusLine.innerHTML += `<div class="summary-head">${art}<div>${row}</div></div>`;
-      }
-    }
-
     if (!opts.showMovieName && stinger && stinger.hasInfo) {
       const verdictHtml = stinger.verdict === 'STAY'
         ? `Is there something worth watching during or after the credits? <span style="color:#2a7a2a; font-weight:700;">Yes, you should STAY</span>`
