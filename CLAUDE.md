@@ -267,9 +267,12 @@ Provenance, because it matters more than the code: the list comes from
 Engadget's 2026 article on where *The Odyssey* plays in true 70mm.
 **imax.com was NOT scraped** -- its robots.txt carries
 `User-agent: ClaudeBot / Disallow: /`. That article names 24 US venues while
-its own text says 30 exist, so treat this as "the venues we can name".
+its own text says 30 exist, so treat this as "the venues we can name". AMC
+Rivercenter 11 (San Antonio) was added afterwards from IMAX's own site via the
+user -- one of the six the article omitted. Adding more is welcome: prefer the
+chain's own theater list for coordinates, and note where the venue came from.
 
-16 of the 24 belong to chains this app already prices (8 Regal, 3 AMC, 4
+17 of the 25 belong to chains this app already prices (8 Regal, 4 AMC, 4
 Cinemark, 1 Harkins), and those carry exact coordinates from the chain's own
 theater list plus a `chainCode`. The remaining 8 are geocoded to the venue
 itself, with the street recorded in `coordSource`. **No city centroids remain.**
