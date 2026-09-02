@@ -561,7 +561,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.9.1</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.9.2</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1241,6 +1241,7 @@
     if (_timingBar) _timingBar.style.display = 'none';
     els.banners.innerHTML = '';
     els.results.innerHTML = '';
+    earlyShowingsExpanded = false; // a new search starts collapsed
     activeResultFormats = new Set(); seenResultFormats = new Set(); // fresh search -- reset to "all formats on"
     activeResultChains = new Set(); seenResultChains = new Set(); // fresh search -- reset to "all chains on"
     activeResultMovies = new Set(); seenResultMovies = new Set(); // fresh search -- reset to "all movies on"
@@ -1585,6 +1586,7 @@
 
     els.banners.innerHTML = '';
     els.results.innerHTML = '';
+    earlyShowingsExpanded = false; // a new search starts collapsed
     activeResultFormats = new Set(); seenResultFormats = new Set(); // fresh search -- reset to "all formats on"
     activeResultChains = new Set(); seenResultChains = new Set(); // fresh search -- reset to "all chains on"
     activeResultMovies = new Set(); seenResultMovies = new Set(); // fresh search -- reset to "all movies on"
@@ -1712,6 +1714,12 @@
   // "closest" distance are independent orderings of the same data, not
   // something that needs a new search.
   let resultSortMode = 'price'; // 'price' | 'distance'
+
+  // Whether the "earlier showings" block is expanded. Kept here rather than
+  // read back off the DOM because renderResults rebuilds els.results wholesale
+  // on every chip click -- so an expanded block silently collapsed each time a
+  // chain or format filter changed, and had to be re-opened.
+  let earlyShowingsExpanded = false;
 
   // The radius the CURRENT results were fetched with -- snapshotted at search
   // time, not read from the input at render time, so editing the box without
@@ -2289,18 +2297,16 @@
         ).join('')
       : '';
 
+    // The count is carried on the button because it changes with the active
+    // filters -- the handler needs the CURRENT number to write the label.
+    const earlyLabel = `Show ${earlyResults.length} earlier showing${earlyResults.length === 1 ? '' : 's'}`;
     const earlyHtml = earlyResults.length
       ? `<div id="early-showings-wrap" style="margin-top:8px;">
            <button id="early-toggle-btn" class="overflow-reveal-btn" style="font-size:12px; padding:5px 10px;"
-             onclick="(function(btn){
-               const list = document.getElementById('early-showings-list');
-               const hidden = list.style.display === 'none';
-               list.style.display = hidden ? '' : 'none';
-               btn.textContent = hidden ? 'Hide earlier showings' : 'Show ${earlyResults.length} earlier showing${earlyResults.length === 1 ? '' : 's'}';
-             })(this)">
-             Show ${earlyResults.length} earlier showing${earlyResults.length === 1 ? '' : 's'}
+             data-count="${earlyResults.length}" onclick="window.toggleEarlyShowings(this)">
+             ${earlyShowingsExpanded ? 'Hide earlier showings' : earlyLabel}
            </button>
-           <div id="early-showings-list" style="display:none;">
+           <div id="early-showings-list" style="display:${earlyShowingsExpanded ? '' : 'none'};">
              <div class="list">${earlyResults.map((r) => buildCardHtml(r, r === cheapestResult, opts)).join('')}</div>
            </div>
          </div>`
@@ -2312,6 +2318,16 @@
         buildCardHtml(r, r === cheapestResult, opts)
       ).join('')}</div>` + overflowHtml;
   }
+
+  window.toggleEarlyShowings = function (btn) {
+    earlyShowingsExpanded = !earlyShowingsExpanded;
+    const list = document.getElementById('early-showings-list');
+    if (list) list.style.display = earlyShowingsExpanded ? '' : 'none';
+    const n = Number(btn.dataset.count) || 0;
+    btn.textContent = earlyShowingsExpanded
+      ? 'Hide earlier showings'
+      : `Show ${n} earlier showing${n === 1 ? '' : 's'}`;
+  };
 
   window.showRegalOverflow = async function(btn, showings) {
     btn.disabled = true;
