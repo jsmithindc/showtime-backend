@@ -501,6 +501,10 @@
      labelled rather than hidden -- the point is that the user can see it and
      judge for themselves, not that it looks like every other result. */
   .dist-over { color: var(--warn); font-weight: 600; cursor: help; }
+  /* Learned estimate, not a real price: same size so the layout doesn't jump,
+     but dimmed and italic so it never reads as something the chain quoted. */
+  .price.estimated { color: var(--warn); font-style: italic; cursor: help; }
+  .estimated-note { color: var(--warn); opacity: 0.8; font-style: italic; cursor: help; }
 
   .meta {
     margin-top: 6px;
@@ -561,7 +565,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.10.0</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.11.0</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1728,6 +1732,29 @@
   let showBasePriceOnly = false; // when true, sort/display uses pre-fee ticket price
   let sortByDiscountPrice = true; // when true, AMC Stubs / Regency Tuesday prices are used for sort order
 
+  // Says plainly what the number is and how it was derived. An estimate that
+  // doesn't explain itself is indistinguishable from a real price the app got
+  // wrong, which is worse than showing nothing.
+  const ESTIMATE_BASIS_TEXT = {
+    'theater+format+time+day': 'this theater, same format, same time of day, same kind of day',
+    'theater+format+time': 'this theater, same format and time of day',
+    'theater+format': 'this theater, same format',
+    'theater+time': 'this theater, same time of day',
+    'theater': 'this theater',
+    'chain+format+time': 'this chain, same format and time of day',
+    'chain+format': 'this chain, same format',
+    'chain': 'this chain',
+  };
+  function estimateTooltip(r) {
+    const where = ESTIMATE_BASIS_TEXT[r.estimateBasis] || 'similar showings';
+    const range = (r.estimatedPriceLow != null && r.estimatedPriceHigh != null && r.estimatedPriceLow !== r.estimatedPriceHigh)
+      ? ` Observed range $${r.estimatedPriceLow.toFixed(2)}-$${r.estimatedPriceHigh.toFixed(2)}.`
+      : '';
+    return `NOT a real price. This theater's pricing couldn't be read for this showing, so this is the average of `
+      + `${r.estimateObservations} price${r.estimateObservations === 1 ? '' : 's'} previously pulled for ${where}.${range}`
+      + ` Check the theater before relying on it.`;
+  }
+
   function buildCardHtml(r, isBest, opts) {
     // Field name differs by chain: AMC/Regal set estimatedFee (a guess,
     // since neither's real data exposes an exact fee), Cinemark/Cinema
@@ -1778,7 +1805,10 @@
                ).join('')}
              </div>`
           : '')
-      : `<span class="price unknown">Check<br/>theater</span>`;
+      : r.estimatedPrice != null
+        ? `<span class="price estimated" title="${escapeHtml(estimateTooltip(r))}">~$${r.estimatedPrice.toFixed(2)}</span>` +
+          `<div class="price-breakdown estimated-note" title="${escapeHtml(estimateTooltip(r))}">estimate</div>`
+        : `<span class="price unknown">Check<br/>theater</span>`;
     return `
       <div class="card ${isBest ? 'best' : ''} ${opts.showMovieName ? 'window-mode' : ''}">
         <div class="price-col">
@@ -1895,6 +1925,11 @@
   // specifically for re-sorting after Regal's results merge in
   // separately, since the merged array isn't re-sorted server-side.
   function effectivePriceForSorting(r) {
+    // A learned estimate participates in cheapest-first ordering -- stranding
+    // it below every priced row is what made unpriced chains invisible in the
+    // first place. It is still visually marked, and cannot take the Cheapest
+    // badge (that check reads r.price directly).
+    if (r.price == null && r.estimatedPrice != null) return r.estimatedPrice;
     // The two toggles COMPOSE -- they aren't alternatives. The discount toggle
     // used to win outright and always return the ONLINE discounted price, so
     // with "base only" + "discounts included" the list was ordered by a

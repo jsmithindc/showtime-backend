@@ -124,6 +124,35 @@ keep their own bespoke files and do not go through this. Overpass is the more
 valuable of the two to migrate (it is rate-limited and returns `[]` when
 throttled).
 
+## Learned fallback pricing
+
+`lib/price-model.js` records every REAL price the app pulls and uses it to
+estimate when a lookup fails. Observations are bucketed by
+`chain | theater | format | daypart | daytype` and written to every
+granularity at once, so a lookup is a most-specific-first walk:
+theater+format+time+day -> ... -> theater -> chain+format -> chain. Needs
+`MIN_OBSERVATIONS` (2) in a bucket before it will answer, and reports which
+level answered plus the observation count.
+
+**Estimates never enter `price`.** They live in `estimatedPrice` (+`Low`,
+`High`, `estimateBasis`, `estimateObservations`). `price` means "read from the
+chain"; the Cheapest badge reads `price` directly and so can never land on a
+guess. The frontend sorts estimates inline (via `effectivePriceForSorting`) but
+renders them italic/amber with a tooltip naming the basis.
+
+Estimates never cross chains -- chain is the first key component -- because
+adapters differ on base-vs-total and which ticket type is cheapest, so a mixed
+bucket would be actively misleading.
+
+**A chain that has NEVER priced gets no estimate.** That is the design working,
+but it means Landmark (0 real prices in every log to date) is not helped by
+this until its pricing succeeds at least twice. Confirmed live: 266 buckets
+learned from one Denver search across AMC/Cinemark/Alamo/Harkins, and Landmark
+still estimated nothing.
+
+Absurd values are rejected on the way in (<=0, >200) so one bad parse cannot
+become the "learned" price for a theater.
+
 ## Known gotchas before touching related code
 
 - **`start.sh` must never be git-tracked.** It has real, hardcoded API keys

@@ -3,6 +3,7 @@ const pLimit = require("p-limit");
 const { findNearbyTheaters } = require("./lib/theaters-overpass");
 const { estimatedMinutesAway, prefilterMinutesAway, minutesToMeters } = require("./lib/distance");
 const { getDriveMinutes, isConfigured: driveTimesConfigured } = require("./lib/drive-times");
+const priceModel = require("./lib/price-model");
 const { getPricedShowtimes, getTheaterSchedule } = require("./lib/priceAdapters/serpapi");
 const { resolveCanonicalLocation } = require("./lib/serpapi-location");
 const { getPricedShowtimes: getRegalPricedShowtimes, getShowtimesForTheater: getRegalShowtimesForTheater, getCachedShowtimesForTheater: getCachedRegalShowtimes, makeCartProvider: makeRegalCartProvider } = require("./lib/priceAdapters/regal-scrapedo");
@@ -1342,6 +1343,23 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
     // SerpApi) -- filters a raw showing to the search window and builds
     // the final result shape. Centralizing this once avoids repeating
     // the same deadline/radius/format logic four more times per chain.
+    // Shared by both builders in this file. Records a real price, or attaches
+    // an estimate when there isn't one.
+    function applyPriceModel(built, { chain, theaterName, format, startTimeRaw }) {
+      const q = { chain, theaterName, format, startTimeRaw, dateISO: searchDateISO };
+      if (built.price != null) {
+        priceModel.record({ ...q, price: built.price });
+        return;
+      }
+      const est = priceModel.estimate(q);
+      if (!est) return;
+      built.estimatedPrice = est.price;
+      built.estimatedPriceLow = est.low;
+      built.estimatedPriceHigh = est.high;
+      built.estimateBasis = est.basis;
+      built.estimateObservations = est.observations;
+    }
+
     function buildResultIfWithinWindow({ theaterName, distanceMin, startTimeRaw, format, price, priceExtras, bookingLink, priceSource, chain }) {
       const startMin = parseGoogleTime(startTimeRaw);
       if (startMin === null) return null;
@@ -1382,6 +1400,13 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
         priceSource: priceSource ?? null,
         ...(priceExtras || {}),
       };
+
+      // Learn from every real price, and fall back to what we've learned when
+      // this particular lookup came back empty. The estimate is kept OUT of
+      // `price` on purpose: `price` means "we read this from the chain", and
+      // nothing downstream that trusts it (the Cheapest badge especially)
+      // should start trusting a guess.
+      applyPriceModel(built, { chain: chain || "other", theaterName, format, startTimeRaw });
 
       // AMC Stubs' real "50% off Tuesdays & Wednesdays" benefit,
       // confirmed directly from AMC's own official terms text: applies
@@ -3199,7 +3224,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
       if (endMin > deadlineMinutes) return null;
       if (!matchesWantedFormat(fmt, wantedFormats)) return null;
 
-      return {
+      const built = {
         theaterName,
         distanceMin,
         chain: "regal",
@@ -3216,6 +3241,26 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
         ...(performanceId ? { performanceId, movieId: perfMovieId, cinemaCode: perfCinemaCode } : {}),
         ...(priceExtras || {}),
       };
+
+      // Same treatment as the main builder: learn from real prices, estimate
+      // when a performance failed to price. Regal is the chain most likely to
+      // need this -- an individual getTicketsForSession can fail while its
+      // siblings at the same theater succeed, which is exactly the case a
+      // same-theater comp answers well.
+      const q = { chain: "regal", theaterName, format: fmt, startTimeRaw, dateISO: searchDateISO };
+      if (built.price != null) {
+        priceModel.record({ ...q, price: built.price });
+      } else {
+        const est = priceModel.estimate(q);
+        if (est) {
+          built.estimatedPrice = est.price;
+          built.estimatedPriceLow = est.low;
+          built.estimatedPriceHigh = est.high;
+          built.estimateBasis = est.basis;
+          built.estimateObservations = est.observations;
+        }
+      }
+      return built;
     }
 
     // SSE: results stream in as each performance finishes pricing rather
@@ -4072,6 +4117,11 @@ console.log(
 );
 
 // TEMPORARY debug endpoint: fetch a Regal showtime page via byparr and
+// Warm the learned-pricing model before serving. Cheap (one cache read) and
+// it means the first search after a restart can already fall back on what
+// previous searches learned rather than starting blind.
+priceModel.load().catch(() => {});
+
 app.listen(PORT, () => {
   console.log(`Showtime Finder API on :${PORT}`);
 
