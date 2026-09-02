@@ -685,10 +685,27 @@ async function applyRealDriveTimes({ originLat, originLng, radiusMin, lists }) {
 
   const driveMinutes = await getDriveMinutes({ originLat, originLng, destinations: everyTheater });
 
-  // A measured time is filtered at exactly radiusMin. An estimate keeps the
-  // 1.15 tolerance chain discovery has always applied to it -- without this,
-  // a search with routing unavailable ends up STRICTER than before this
-  // feature existed, silently losing theaters it used to return.
+  // Theaters up to NEAR_MISS_BUFFER_MIN past the limit are KEPT, and shown
+  // tagged as just outside the window rather than dropped.
+  //
+  // The boundary is not as sharp as a single number implies. Measured from
+  // three plausible "Denver" origins within 1.5 miles of each other, AMC
+  // Southlands and AMC Castle Rock landed at 31/30/31 minutes against a
+  // 30-minute limit -- in or out depending on which downtown point the
+  // geocoder happened to return. Routing is also free-flow (no traffic model)
+  // and stops at the theater's coordinates (no parking, no walk in). Cutting
+  // hard at the exact minute is false precision, and silently dropping a
+  // 31-minute theater hides a result the user would likely have wanted.
+  //
+  // A flat buffer rather than a percentage, so it doesn't stretch with the
+  // radius: 5 minutes of slack means the same thing on a 15-minute search as
+  // on a 60-minute one.
+  const NEAR_MISS_BUFFER_MIN = 5;
+
+  // An estimate additionally keeps the 1.15 tolerance chain discovery has
+  // always applied to it -- without this, a search with routing unavailable
+  // could end up STRICTER than before this feature existed, silently losing
+  // theaters it used to return.
   const ESTIMATE_TOLERANCE = 1.15;
   const measured = new WeakSet();
 
@@ -709,12 +726,24 @@ async function applyRealDriveTimes({ originLat, originLng, radiusMin, lists }) {
   });
 
   const limitFor = (t) =>
-    Number(radiusMin) * (measured.has(t) ? 1 : ESTIMATE_TOLERANCE);
+    measured.has(t)
+      ? Number(radiusMin) + NEAR_MISS_BUFFER_MIN
+      : Math.max(Number(radiusMin) + NEAR_MISS_BUFFER_MIN, Number(radiusMin) * ESTIMATE_TOLERANCE);
 
   const dropped = [];
+  const nearMisses = [];
   for (const [label, list] of lists) {
     const kept = list.filter((t) => t.distanceMin <= limitFor(t));
     const cut = list.filter((t) => t.distanceMin > limitFor(t));
+    for (const t of kept) {
+      // No flag is set on the object: every result already carries its own
+      // distanceMin, and the frontend has the radius the user asked for, so it
+      // tags these itself. Plumbing a boolean through every result builder in
+      // both modes would be the same comparison done in more places.
+      if (t.distanceMin > Number(radiusMin)) {
+        nearMisses.push(`${t.name || t.code || "?"}=${t.distanceMin}min`);
+      }
+    }
     if (cut.length) {
       dropped.push(`${label}: ` + cut.map((t) => `${t.name || t.code || "?"}=${t.distanceMin}min`).join(", "));
     }
@@ -730,7 +759,8 @@ async function applyRealDriveTimes({ originLat, originLng, radiusMin, lists }) {
             ? " (DISABLE_DRIVE_TIMES=true -- straight-line estimates)"
             : " (GEOAPIFY_API_KEY unset -- straight-line estimates)")
       : "") +
-    (dropped.length ? ` | beyond ${radiusMin}min once measured: ${dropped.join(" | ")}` : "")
+    (nearMisses.length ? ` | kept as near-misses (within +${NEAR_MISS_BUFFER_MIN}min): ${nearMisses.join(", ")}` : "") +
+    (dropped.length ? ` | too far even with the buffer: ${dropped.join(" | ")}` : "")
   );
 }
 

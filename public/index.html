@@ -479,6 +479,10 @@
   }
   .card.window-mode .theater-name::before { content: "at "; opacity: .7; }
   .dist { font-size: 12px; color: var(--ink-dim); white-space: nowrap; flex-shrink: 0; }
+  /* Past the requested radius but inside the 5-minute buffer. Tinted and
+     labelled rather than hidden -- the point is that the user can see it and
+     judge for themselves, not that it looks like every other result. */
+  .dist-over { color: var(--warn); font-weight: 600; cursor: help; }
 
   .meta {
     margin-top: 6px;
@@ -539,7 +543,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.7.0</span></h1>
+  <h1>Showtime Finder <span id="versionBadge" style="font-size:12px; font-weight:400; color:#888; vertical-align:middle;">6.7.1</span></h1>
   <p class="subtitle">Cheapest ticket, any format, that still gets you out on time.</p>
 
   <div class="panel">
@@ -1049,6 +1053,7 @@
     const lng = els.lng.value.trim();
     const place = els.place.value.trim();
     const radius = els.radius.value.trim();
+    searchedRadiusMin = Number(radius) || null;
 
     if ((!lat || !lng) && !place) {
       if (!silent) els.statusLine.textContent = 'Fill in a zip code or city first -- movie lookup needs to know where to look.';
@@ -1178,6 +1183,7 @@
     const lng = els.lng.value.trim();
     const place = els.place.value.trim();
     const radius = els.radius.value.trim();
+    searchedRadiusMin = Number(radius) || null;
     const deadline = els.deadline.value.trim();
 
     if (regalEs) { regalEs.close(); regalEs = null; }
@@ -1466,6 +1472,7 @@
     const lng = els.lng.value.trim();
     const place = els.place.value.trim();
     const radius = els.radius.value.trim();
+    searchedRadiusMin = Number(radius) || null;
     const availableFrom = els.availableFrom.value.trim();
     const hours = parseFloat(els.availableForHours.value);
 
@@ -1598,6 +1605,11 @@
   // "closest" distance are independent orderings of the same data, not
   // something that needs a new search.
   let resultSortMode = 'price'; // 'price' | 'distance'
+
+  // The radius the CURRENT results were fetched with -- snapshotted at search
+  // time, not read from the input at render time, so editing the box without
+  // re-searching doesn't silently re-label cards that never moved.
+  let searchedRadiusMin = null;
   let showBasePriceOnly = false; // when true, sort/display uses pre-fee ticket price
   let sortByDiscountPrice = true; // when true, AMC Stubs / Regency Tuesday prices are used for sort order
 
@@ -1665,7 +1677,10 @@
           ${ratingsHtml(r.ratings)}` : ''}
           <div class="card-top">
             <span class="theater-name">${escapeHtml(r.theaterName)}</span>
-            <span class="dist">${r.distanceMin} min away</span>
+            <span class="dist${searchedRadiusMin && r.distanceMin > searchedRadiusMin ? ' dist-over' : ''}"${
+              searchedRadiusMin && r.distanceMin > searchedRadiusMin
+                ? ` title="Just outside your ${searchedRadiusMin}-minute radius. Kept because drive times are free-flow estimates with no traffic or parking, and a minute either way is inside that margin."`
+                : ''}>${r.distanceMin} min away${searchedRadiusMin && r.distanceMin > searchedRadiusMin ? ' &middot; just outside' : ''}</span>
           </div>
           <div class="time-large">${fmtTime24to12FromRaw(r.startTime)}</div>
           ${(r.filmActuallyStartsAt || r.estimatedEndTime) ? `<div class="time-sub">${r.filmActuallyStartsAt ? `Skip trailers, arrive ${escapeHtml(r.filmActuallyStartsAt)}` : ''}${r.filmActuallyStartsAt && r.estimatedEndTime ? ' &middot; ' : ''}${r.estimatedEndTime ? `Done by ${escapeHtml(r.estimatedEndTime)}` : ''}</div>` : ''}

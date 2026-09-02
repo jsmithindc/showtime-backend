@@ -134,6 +134,16 @@ requested above but present in `server.js` under `chain: "cinemawest"`.)
   duplicate coordinates already collapse and results are cached, and a
   too-tight pre-filter loses theaters invisibly, which is the exact bug this
   replaced (four Denver AMCs, 20-30min drives, scored 35-51min and dropped).
+  Theaters up to **5 minutes past** the radius are kept and tagged "just
+  outside" in the UI (`.dist-over`), rather than dropped: the boundary is not
+  sharp enough to justify a hard cut. Measured from three points within 1.5
+  miles of each other in downtown Denver, AMC Southlands and AMC Castle Rock
+  came out 31/30/31 min against a 30-min limit -- in or out purely on which
+  downtown coordinate the geocoder returned. Routing is also free-flow (no
+  traffic) and stops at the theater's coordinates (no parking or walk-in), so
+  the number is soft in both directions. The frontend derives the tag by
+  comparing `distanceMin` against the radius it searched with
+  (`searchedRadiusMin`); there is no server-side flag to keep in sync.
 - **Runtime is not looked up live in the legacy SerpApi path** — see the
   `RUNTIME_MIN` constant / `lib/movie-runtime.js` overrides. Confirm which
   code path (official adapter vs. SerpApi fallback) a given theater is
