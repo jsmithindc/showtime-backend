@@ -514,6 +514,8 @@
     cursor: help;
   }
   .imax70 b { color: var(--ink); }
+  .imax70-seats { margin-top: 5px; font-size: 11px; color: var(--ink-dim); opacity: .95; }
+  .imax70-seats b { color: var(--gold); }
   .imax70-tag {
     display: inline-block;
     margin-right: 7px;
@@ -2270,6 +2272,19 @@
           `<span class="imax70-tag">70mm film</span>` +
           `nearest: <b>${escapeHtml(imax.name)}</b>, ${escapeHtml(imax.city)}, ${escapeHtml(imax.state)} ` +
           `&middot; ${label}${imax.chain ? '' : ' &middot; not searched (no adapter for this venue)'}` +
+          // Firsthand seating note, where one exists. Shown rather than buried
+          // in a tooltip: it is the kind of thing you want BEFORE booking, and
+          // for a venue you may drive hours to, which row you pick matters
+          // about as much as getting there.
+          (imax.seating
+            ? `<div class="imax70-seats" title="${escapeHtml(imax.seating.note || '')}">` +
+                `sit in <b>row ${escapeHtml(imax.seating.best)}</b>` +
+                (imax.seating.good && imax.seating.good.length
+                  ? ` &middot; ${escapeHtml(imax.seating.good.join(' or '))} also good` : '') +
+                (imax.seating.tooClose && imax.seating.tooClose.length
+                  ? ` &middot; ${escapeHtml(imax.seating.tooClose.join('/'))} too close` : '') +
+              `</div>`
+            : '') +
         `</div>`;
     }
 

@@ -259,6 +259,13 @@ deliberately NOT radius-filtered -- "your nearest is an 8-hour drive" is a
 useful answer for a format with 24 known US venues; "none found" is not.
 Surfaced on `/api/search`'s `done` payload and rendered under the chain report.
 
+Four venues carry **firsthand seating notes** (`seating: { best, good,
+tooClose, note }`), shown under the venue line. Row letters are per-venue and
+do NOT transfer -- row F is solid at the Esquire and too close at CityWalk --
+and `note` deliberately preserves the original hedging, since "confirmed good"
+and "seems solid" are different claims. Add more the same way; they are
+observations, not published data.
+
 **This is not the `IMAX` format chip.** That chip is DIGITAL IMAX, which is what
 every chain adapter reports. Anyone reaching for it expecting film gets the
 wrong thing, which is why the UI spells out "70mm film" and the tooltip says so.
