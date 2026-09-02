@@ -80,6 +80,14 @@ while the same search with Regal off finished in 1.5s. Only GETs are pooled --
 on POST volume. Set `CAMOFOX_TAB_POOL=1` to restore the old single-tab
 behaviour.
 
+It also carries a **circuit breaker**: after 3 consecutive tab-open failures it
+declines every URL via `supports()` for 60s, so the chain skips it without
+opening a socket. Any success resets it. This exists because a Camofox outage
+otherwise costs a full `openTab` round trip per request before falling through
+-- measured live at 124.7s for one search, with `first Regal` at 86.6s, against
+a host that had already returned 500 three times. The pool amplifies this
+rather than helping, since more tabs means more independent opens to fail.
+
 A provider may export **`supports(url)`** to decline requests it structurally
 cannot serve; `fetchWithRotation` skips those without calling them.
 `camofox-regal` and `apify-cfbypass` both declare regmovies.com only, because
