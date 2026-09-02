@@ -228,6 +228,27 @@ There is nothing to remember and nothing to bump. If the badge renders empty,
 `/api/version` failed -- that is deliberate, since a blank badge is honest and
 a stale hardcoded one is not.
 
+## Theater-list coverage
+
+Chains whose list is fetched LIVE are complete by construction: **AMC** (by
+state, official API), **Regal** (403 theaters), **Harkins** (nationwide route).
+Static lists are only as good as whoever last edited them, so each has a
+generator under `scripts/`:
+
+- **Cinemark** — 300, Alaska to the East Coast (`build-cinemark-theater-map.js`)
+- **Alamo** — 40 open cinemas / 23 markets / 14 states, regenerate with
+  `node scripts/build-alamo-cinemas.js --write` from Alamo's own
+  `/s/mother/v1/market` API (`drafthouse.com/robots.txt` is `Allow: /`). It was
+  hand-maintained at 22 until 2026-09-02, i.e. nearly half the chain was
+  invisible, with nothing to indicate it.
+- **Landmark** — 26, and that is **complete**: their `/our-locations/` page
+  publishes exactly 26 code-slugs. Atom Tickets lists 62 URLs matching
+  "landmark", which are renamed or former venues; do not treat that as a gap.
+- **Cinema West / Regency** — California regional by design.
+
+If a chain seems to be missing a city, check its list length against the
+chain's own source before assuming an adapter bug.
+
 ## Known gotchas before touching related code
 
 - **`start.sh` must never be git-tracked.** It has real, hardcoded API keys
