@@ -74,6 +74,11 @@ export CAMOFOX_SESSION_KEY="paste-your-chosen-session-key-here"
 # on a real search (53.7s vs 32.5s), because opening tabs is serialized and
 # costs more than the added concurrency saves.
 # export CAMOFOX_TAB_POOL=4
+# How long an idle Camofox tab is kept for reuse, in minutes (default 5).
+# Irrelevant within a single search; it only affects searches spaced further
+# apart than this, which re-open the pool (~5s per tab). Raise it for snappier
+# repeat searches, lower it if the Camofox host is memory-tight.
+# export CAMOFOX_TAB_TTL_MIN=5
 export DISABLE_REGAL_PRICING="false"  # set to "true" to pause Regal/Scrape.do pricing again
 export DISABLE_CINEMARK_PRICING="false"  # set to "true" to pause Cinemark direct pricing
 # Cinema West (Country Club Cinema) fetches its own access token live --
