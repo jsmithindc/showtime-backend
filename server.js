@@ -31,7 +31,7 @@ const THEATER_DISPLAY_NAMES = {
   "New Vision Theatres Tilghman Square 8": "AMC Tilghman Square 8",
 };
 const EXCLUDED_THEATERS = require("./lib/excluded-theaters");
-const { redisConfigured } = require("./lib/disk-cache");
+const { redisConfigured, readCache, writeCache } = require("./lib/disk-cache");
 const { getPricedShowtimes: getAmcPricedShowtimes, getShowtimesForTheater: getAmcShowtimesForTheater, getRuntimeFromCatalog: getAmcRuntimeFromCatalog } = require("./lib/priceAdapters/amc-official");
 const { getAmcTheatersByState, findClosestAmcTheater } = require("./lib/amc-theaters-by-state");
 const AMC_THEATRE_MAP = require("./lib/amc-theatre-map"); // static fallback when live API is unavailable
@@ -3264,8 +3264,27 @@ app.get("/api/popular-movies", async (req, res) => {
   // default "what's playing" list shown before the user sets a location.
   // Mesquite 30 is chosen because it's a high-screen-count multiplex that
   // carries nearly every wide-release title on any given day.
+  // Cached, because this fires on EVERY page load and the answer -- what is
+  // playing nationwide today -- changes once a day. Two consequences, both of
+  // which showed up live: a page load stops costing an AMC round trip, and a
+  // stored list keeps the dropdown populated through an AMC outage. Before
+  // this, a 403 from AMC meant an empty dropdown and no way to pick a film
+  // without hitting "Not seeing it?" (which uses /api/movies, a different
+  // endpoint that falls through to Regal).
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const cacheKey = `popular-movies-${todayISO}`;
+  const now = new Date();
+  const ttlToMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) - now;
+  // A whole week, used ONLY when AMC is unreachable. Yesterday's wide releases
+  // are a far better answer than an empty dropdown, and the list barely moves.
+  const STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
   try {
-    const todayISO = new Date().toISOString().slice(0, 10);
+    const fresh = await readCache(cacheKey, ttlToMidnight);
+    if (fresh && fresh.length) return res.json({ movies: fresh });
+  } catch { /* cache is best-effort; fall through to the live fetch */ }
+
+  try {
     const txTheaters = await getAmcTheatersByState("TX");
     const mesquite = txTheaters.find((t) => /mesquite\s+30/i.test(t.name))
       || txTheaters.find((t) => /mesquite/i.test(t.name));
@@ -3288,9 +3307,22 @@ app.get("/api/popular-movies", async (req, res) => {
       }
     }
     movies.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
+    writeCache(cacheKey, movies, STALE_TTL_MS);
+    console.error(`Popular-movies: ${movies.length} title(s) from ${mesquite.name}, cached for the day.`);
     res.json({ movies });
   } catch (err) {
     console.error("Popular-movies (AMC Mesquite 30) lookup failed:", err.message);
+    // Serve a stale list rather than nothing. This is the whole point of
+    // caching here: an empty dropdown is indistinguishable from "no films
+    // playing" to whoever is looking at it.
+    try {
+      const stale = await readCache(cacheKey, STALE_TTL_MS)
+        || await readCache(`popular-movies-${new Date(Date.now() - 864e5).toISOString().slice(0, 10)}`, STALE_TTL_MS);
+      if (stale && stale.length) {
+        console.error(`Popular-movies: serving ${stale.length} cached title(s) instead — AMC is unreachable.`);
+        return res.json({ movies: stale, stale: true });
+      }
+    } catch { /* fall through to the error below */ }
     res.status(500).json({ error: err.message, movies: [] });
   }
 });
