@@ -767,8 +767,11 @@
       <button class="chip mode-aside" id="modeImaxBtn" type="button">IMAX 70mm near me</button>
     </div>
 
-    <!-- Shown only on the IMAX 70mm tab. Deliberately OUTSIDE #imax70Body,
-         whose contents are replaced wholesale on every render. -->
+    <!-- Both of these are shown only on the IMAX 70mm tab, and both sit OUTSIDE
+         #imax70Body, whose contents are replaced wholesale on every render.
+         The map leads the page: it is the overview, and putting it inside the
+         results pushed the first showing 880px down, past the fold. -->
+    <div id="imax70Map" style="display:none;"></div>
     <p id="imax70Intro" style="display:none;">IMAX 70mm offers the largest and highest resolution film format available, providing an incredibly immersive viewing experience with up to 18K equivalent resolution and a unique aspect ratio of 1.43:1. This format captures more image information, making visuals appear sharper and more detailed on colossal screens.</p>
 
     <div id="specificMovieFields">
@@ -930,6 +933,7 @@
     pageFooter: document.getElementById('pageFooter'),
     imax70Body: document.getElementById('imax70Body'),
     imax70Intro: document.getElementById('imax70Intro'),
+    imax70Map: document.getElementById('imax70Map'),
     imax70Timing: document.getElementById('imax70Timing'),
     banners: document.getElementById('banners'),
     results: document.getElementById('results'),
@@ -1019,6 +1023,9 @@
     // for the two search modes.
     els.imax70Body.style.display = isImax ? '' : 'none';
     if (els.imax70Intro) els.imax70Intro.style.display = isImax ? '' : 'none';
+    // Only once it has content: an empty box above the intro before the first
+    // search would just be a gap.
+    if (els.imax70Map) els.imax70Map.style.display = (isImax && els.imax70Map.innerHTML) ? '' : 'none';
     // Leaving the tab hides its bar; coming back shows the last lookup's
     // timings again, which is the same thing the snapshot does for the others.
     if (els.imax70Timing) els.imax70Timing.style.display = (isImax && els.imax70Timing.textContent) ? '' : 'none';
@@ -3213,8 +3220,12 @@
     const rest = venues
       .filter((v) => !(v.showings && v.showings.length) && !v.error && !v.tooFar)
       .slice(0, 6);
+    if (els.imax70Map) {
+      els.imax70Map.innerHTML = imax70MapHtml(venues);
+      els.imax70Map.style.display = els.imax70Map.innerHTML ? '' : 'none';
+    }
+
     els.imax70Body.innerHTML =
-      imax70MapHtml(venues) +
       (playing.length
         ? `<div class="status-line"><b>${playing.length}</b> venue${playing.length === 1 ? '' : 's'} with an IMAX 70mm showing today, nearest first.</div>` + playing.map(row).join('')
         : `<div class="status-line">No IMAX 70mm showings found today at the ${checked} venue${checked === 1 ? '' : 's'} we can check.</div>`) +
