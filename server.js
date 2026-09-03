@@ -30,6 +30,7 @@ const THEATER_DISPLAY_NAMES = {
   "New Vision Theatres Tilghman Square 8": "AMC Tilghman Square 8",
 };
 const EXCLUDED_THEATERS = require("./lib/excluded-theaters");
+const { redisConfigured } = require("./lib/disk-cache");
 const { getPricedShowtimes: getAmcPricedShowtimes, getShowtimesForTheater: getAmcShowtimesForTheater, getRuntimeFromCatalog: getAmcRuntimeFromCatalog } = require("./lib/priceAdapters/amc-official");
 const { getAmcTheatersByState, findClosestAmcTheater } = require("./lib/amc-theaters-by-state");
 const AMC_THEATRE_MAP = require("./lib/amc-theatre-map"); // static fallback when live API is unavailable
@@ -4576,6 +4577,17 @@ priceModel.load().catch(() => {});
 
 app.listen(PORT, () => {
   console.log(`Showtime Finder API on :${PORT}`);
+
+  // Said out loud at boot because the shared cache tier is otherwise
+  // invisible: unset credentials and working credentials both run silently,
+  // so "is Upstash actually on?" was unanswerable from the logs. Render's
+  // filesystem is ephemeral, so on a fresh container every cache entry that
+  // survives a deploy came from here.
+  console.log(
+    redisConfigured()
+      ? "Shared cache: Upstash Redis configured -- entries survive redeploys (watch for 'Shared cache HIT' lines)."
+      : "Shared cache: Upstash Redis NOT configured -- local file cache only, wiped on every redeploy."
+  );
 
   // Keep the byparr named session warm so the first real search doesn't pay
   // the cold-start cost of solving the Cloudflare challenge from scratch.
