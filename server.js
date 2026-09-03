@@ -437,8 +437,9 @@ app.get("/api/imax-70mm", async (req, res) => {
           console.error(
             `IMAX 70mm: priced ${target.name} -- ${pricedCount}/${target.showings.length} showings, 0 credit(s).` +
             (pricedCount ? "" :
-              ` Cinemark listed ${showtimes.length} showtime(s) [${showtimes.map((x) => atHHMM(x.showtimeISO)).join(", ")}]` +
-              ` against Atom's 70mm times [${target.showings.map((x) => x.time).join(", ")}].`)
+              ` Cinemark listed ${showtimes.length} showtime(s) [${showtimes.map((x) => `${atHHMM(x.showtimeISO)} ${x.format || "?"}`).join(", ")}]` +
+              ` for cinemarkMovieId ${cinemarkMovieId}, against Atom's 70mm times [${target.showings.map((x) => x.time).join(", ")}].` +
+              ` If none of those formats is IMAX, this movie id is the standard version of the film and the 70mm screen is a separate Cinemark entry.`)
           );
           // A silent 0/N is the one outcome that tells nobody anything, so
           // say WHICH of the three reasons it was.
@@ -449,7 +450,7 @@ app.get("/api/imax-70mm", async (req, res) => {
             }
             throw new Error(
               `Cinemark lists ${showtimes.length} showtime(s) for "${movieName}" here, but none start at the same time as Atom's 70mm showings ` +
-              `(Cinemark: ${showtimes.map((x) => atHHMM(x.showtimeISO)).join(", ")}; Atom: ${target.showings.map((x) => x.time).join(", ")})`
+              `(Cinemark: ${showtimes.map((x) => `${atHHMM(x.showtimeISO)} ${x.format || "?"}`).join(", ")}; Atom: ${target.showings.map((x) => x.time).join(", ")})`
             );
           }
         } catch (err) {
