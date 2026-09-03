@@ -483,6 +483,18 @@ the point, and a matching ZIP is strong confirmation.
   stage it and leak every credential above. Treat this as standing
   first-priority cleanup: add a `.gitignore` with `start.sh` (and
   `node_modules/`) in it before relying on habit alone.
+- **Regal ticket types do not always fill `LongDescription`.** Colorado Center
+  9's IMAX 70mm ticket arrives as `{Description: "General Admission",
+  LongDescription: "", PriceInCents: 3199}` -- so a matcher reading only
+  `LongDescription` saw an empty string and priced nothing while the price sat
+  in the same object. `extractAdultPriceCents()` now reads both fields, and
+  falls through four layers: explicit "adult" -> Vista age-inclusive phrasing
+  ("12 and older") -> "General Admission"/"Standard" -> exactly one ticket
+  passing the structural flags (`IsChildOnlyTicket`/`IsPackageTicket`/
+  `IsRedemptionTicket`/`IsComplimentaryTicket`). That last layer deliberately
+  refuses to answer when more than one candidate survives, since guessing which
+  of several unnamed types is the adult one would put a wrong number in
+  `price`, which by design means "read from the chain".
 - **Distance-only theater matching is fragile in dense areas.** Both the
   Regal and AMC auto-match logic (matching an unmapped OSM theater to a
   known chain-ID list purely by lat/lng proximity) previously mismatched
