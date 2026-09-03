@@ -276,12 +276,23 @@ have no adapter, so those report `checked: false` rather than "no showings",
 which would be a different and wrong claim -- and the UI stays silent about
 them rather than implying anything.
 
-Surfaced as a **collapsed `<details>` panel under Formats/Chains**, not a third
-top tab. The two tabs are modes of the SAME search (same inputs, priced
-showtime cards out); this has different inputs, ignores the radius, and is
-asked rarely, so a tab would imply a parity it doesn't have. It sits under the
-location field because that is the input it depends on, and fetches on first
-open rather than on page load.
+Surfaced as a **third mode button, right-aligned** (`.mode-aside`) to signal it
+is a different kind of thing from the two search modes beside it. That tab
+shows only the location field -- date, radius, deadline, format and chain
+filters are all hidden, because the lookup ignores the radius and "IMAX 70mm"
+IS the format -- and renders into its own `#imax70Body`.
+
+**With `only70mm=true` it lists a venue's actual 70mm showings**, which is real
+data rather than inference for two chains: AMC exposes an `IMAX70MM` attribute
+code (distinct from a plain `70MM` print -- both appear at Lincoln Square on the
+same day), and Regal spells it in the format string as `"IMAX IMAX 70mm"`.
+Harkins says only `"IMAX"` even on a confirmed 70mm session, so its showings
+carry `confirmed: false` and the UI marks them with an asterisk.
+
+Note `lib/priceAdapters/amc-official.js` keeps `attributeCodes` ALONGSIDE the
+flattened `format`: `format` normalizes a 70mm IMAX print and a digital IMAX
+show both to "IMAX at AMC", which is right for the format-filter chips and
+useless for this.
 
 Four venues carry **firsthand seating notes** (`seating: { best, good,
 tooClose, note }`), shown under the venue line. Row letters are per-venue and

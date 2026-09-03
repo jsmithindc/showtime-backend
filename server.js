@@ -42,7 +42,7 @@ const CINEMARK_MOVIE_MAP = require("./lib/cinemark-movie-map");
 const CINEMAWEST_THEATER_MAP = require("./lib/cinemawest-theater-map");
 const { getShowtimesForSite: getCinemaWestShowtimes, getTicketPricing: getCinemaWestTicketPricing, getFreshTokenCached: getCinemaWestFreshToken } = require("./lib/priceAdapters/cinemawest-official");
 const { getHarkinsTheaters } = require("./lib/harkins-theaters");
-const { getShowtimesForMovie: getHarkinsShowtimesForMovie, getTicketPricing: getHarkinsTicketPricing, getRuntimeForMovie: getHarkinsRuntimeForMovie } = require("./lib/priceAdapters/harkins-official");
+const { getMovieCatalog: getHarkinsMovieCatalog, getShowtimesForMovie: getHarkinsShowtimesForMovie, getTicketPricing: getHarkinsTicketPricing, getRuntimeForMovie: getHarkinsRuntimeForMovie } = require("./lib/priceAdapters/harkins-official");
 const REGENCY_THEATER_MAP = require("./lib/regency-theater-map");
 const { getShowtimesForLocation: getRegencyShowtimesForLocation, getTicketPricing: getRegencyTicketPricing, getFilmIdMap: getRegencyFilmIdMap } = require("./lib/priceAdapters/regency-official");
 const { getAlamoCinemasInRange, getAlamoShowtimesForCinemas, getAlamoSessionPrice } = require("./lib/priceAdapters/alamo-official");
@@ -154,8 +154,34 @@ app.use(express.static("public"));
 // Deliberately ignores radiusMin. Someone asking this will drive further than
 // they would for an ordinary showing -- that is the whole point of asking --
 // so capping at the search radius would answer the wrong question.
+// Harkins' showtimes API is movie-SCOPED, so a venue-wide "what's on 70mm
+// here" needs a sweep of the current catalog. Bounded to what is actually
+// playing and cached by the adapter, but it is the expensive branch.
+const harkinsVenueCache = new Map();
+async function getHarkinsAllForVenue(venue, dateISO) {
+  const key = `${venue.chainCode}|${dateISO}`;
+  if (harkinsVenueCache.has(key)) return harkinsVenueCache.get(key);
+  const out = [];
+  try {
+    const catalog = await getHarkinsMovieCatalog();
+    const titles = (catalog || []).map((m) => m.title || m.name).filter(Boolean).slice(0, 40);
+    await Promise.all(titles.map((t) => priceLimit(async () => {
+      try {
+        const st = await getHarkinsShowtimesForMovie({ movieTitle: t, dateISO });
+        for (const x of st || []) if (String(x.theatreId) === String(venue.chainCode)) out.push({ ...x, movieName: t });
+      } catch { /* one title failing must not lose the rest */ }
+    })));
+  } catch { /* leave empty */ }
+  harkinsVenueCache.set(key, out);
+  return out;
+}
+
 app.get("/api/imax-70mm", async (req, res) => {
   const { lat, lng, movie, date } = req.query;
+  // only70mm: list the venue's actual IMAX 70mm showings rather than checking
+  // for one film. AMC exposes an IMAX70MM attribute code and Regal spells it
+  // in the format string, so this is real data, not an inference.
+  const only70mm = req.query.only70mm === "true";
   const originLat = Number(lat), originLng = Number(lng);
   if (!Number.isFinite(originLat) || !Number.isFinite(originLng)) {
     return res.status(400).json({ error: "lat and lng are required" });
@@ -168,12 +194,12 @@ app.get("/api/imax-70mm", async (req, res) => {
       originLat, originLng, limit: IMAX_70MM_VENUES.length, getDriveMinutes,
     });
 
-    if (!movie) return res.json({ dateISO, movie: null, venues });
+    if (!movie && !only70mm) return res.json({ dateISO, movie: null, venues });
 
     // Film-specific: ask the chains we have adapters for whether that title is
     // playing at each venue. Harkins answers nationwide in ONE call, so it is
     // fetched once rather than per venue.
-    const harkinsAll = venues.some((v) => v.chain === "harkins")
+    const harkinsAll = movie && !only70mm && venues.some((v) => v.chain === "harkins")
       ? await getHarkinsShowtimesForMovie({ movieTitle: movie, dateISO }).catch(() => [])
       : [];
 
@@ -183,8 +209,11 @@ app.get("/api/imax-70mm", async (req, res) => {
         if (v.chain === "amc" && v.chainCode) {
           const st = await getAmcShowtimesForTheater({ theatreId: v.chainCode, dateISO });
           v.checked = true;
-          v.showings = (st || []).filter((x) => matchesMovie(x.movieName, movie))
-            .map((x) => ({ time: x.startTime || x.time, format: x.format }));
+          const wanted = (st || []).filter((x) => !movie || matchesMovie(x.movieName, movie));
+          v.showings = wanted
+            .filter((x) => !only70mm || (x.attributeCodes || []).includes("IMAX70MM"))
+            .map((x) => ({ time: x.time, format: x.format, movieName: x.movieName,
+                           imax70mm: (x.attributeCodes || []).includes("IMAX70MM"), confirmed: true }));
         } else if (v.chain === "regal" && v.chainCode) {
           // costTracker is required, not optional -- omitting it threw
           // "Cannot read properties of undefined (reading 'total')" and
@@ -193,16 +222,34 @@ app.get("/api/imax-70mm", async (req, res) => {
             cinemaCode: v.chainCode, dateISO, costTracker: { total: 0, byProvider: {} },
           });
           v.checked = true;
-          v.showings = (perfs || []).filter((x) => matchesMovie(x.movieName, movie))
-            .map((x) => ({ time: x.startTimeRaw || x.time, format: x.format }));
+          const wanted = (perfs || []).filter((x) => !movie || matchesMovie(x.movieName, movie));
+          // Regal spells it in the format string: "IMAX IMAX 70mm".
+          const is70 = (x) => /imax\s*70\s*-?\s*mm/i.test(x.format || "");
+          v.showings = wanted
+            .filter((x) => !only70mm || is70(x))
+            // showTime, not startTimeRaw -- the latter is undefined on this
+            // shape and every Regal row rendered a blank time.
+            .map((x) => ({ time: String(x.showTime || "").slice(11, 16) || x.showTime,
+                           format: x.format, movieName: x.movieName, imax70mm: is70(x), confirmed: true }));
         } else if (v.chain === "harkins" && v.chainCode) {
           v.checked = true;
           // theatreId (British spelling) is Harkins' own field name, and it is
           // a NUMBER. Comparing against a missing chainCode previously made
           // every one of the 188 nationwide performances "match" this venue.
-          v.showings = (harkinsAll || [])
+          //
+          // Harkins says only "IMAX", never "IMAX 70mm" -- confirmed against a
+          // real 70mm session at Arizona Mills (session 570616), which reports
+          // format "IMAX". At a 15/70 venue an IMAX showing is very likely the
+          // film print, but Harkins does not say so, so it is flagged
+          // confirmed:false and the UI marks it. AMC and Regal state it
+          // outright and are confirmed:true.
+          const src = only70mm ? (await getHarkinsAllForVenue(v, dateISO)) : (harkinsAll || []);
+          v.showings = src
             .filter((x) => String(x.theatreId) === String(v.chainCode))
-            .map((x) => ({ time: (x.showtimeOffset || "").slice(11, 16), format: x.format }));
+            .filter((x) => !only70mm || /imax/i.test(x.format || ""))
+            .map((x) => ({ time: (x.showtimeOffset || "").slice(11, 16), format: x.format,
+                           movieName: x.movieName || null, imax70mm: /imax/i.test(x.format || ""),
+                           confirmed: false }));
         } else {
           // Cinemark's showtimes API is movie-scoped rather than theater-scoped,
           // and the 8 non-chain venues (museums, independents) have no adapter
