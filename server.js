@@ -272,8 +272,13 @@ app.get("/api/imax-70mm", async (req, res) => {
           // museums, the independents -- goes through Atom, which is the only
           // source that tags a showing as IMAX70MM. One Firecrawl credit per
           // venue per DAY, shared-cached, not per query.
-          const rows = await getAtom70mmShowings({ atomSlug: v.atomSlug, dateISO });
-          if (!rows) { v.showings = null; return; }
+          const { rows, error, retryable } = await getAtom70mmShowings({ atomSlug: v.atomSlug, dateISO });
+          if (!rows) {
+            v.showings = null;
+            v.error = error || "lookup failed";
+            v.retryable = !!retryable;
+            return;
+          }
           v.checked = true;
           v.source = "atom";
           const wanted = rows.filter((r) => !movie || matchesMovie(r.movieName, movie));

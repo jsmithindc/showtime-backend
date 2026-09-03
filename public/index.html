@@ -2750,13 +2750,32 @@
     };
 
     const checked = venues.filter((v) => v.checked).length;
-    const rest = venues.filter((v) => !(v.showings && v.showings.length)).slice(0, 6);
+    // Three distinct outcomes, deliberately not collapsed into one "no
+    // showings" bucket: a venue we checked and found nothing at is a real
+    // answer, a venue we couldn't reach is not an answer at all, and one we
+    // didn't try is a choice the user can undo. Rendering them the same way
+    // made a rate-limited lookup indistinguishable from a quiet Tuesday.
+    const failed = venues.filter((v) => v.error && !(v.showings && v.showings.length));
+    const rest = venues
+      .filter((v) => !(v.showings && v.showings.length) && !v.error && !v.tooFar)
+      .slice(0, 6);
     els.imax70Body.innerHTML =
       (playing.length
         ? `<div class="status-line"><b>${playing.length}</b> venue${playing.length === 1 ? '' : 's'} with a 70mm IMAX showing today, nearest first.</div>` + playing.map(row).join('')
         : `<div class="status-line">No 70mm IMAX showings found today at the ${checked} venue${checked === 1 ? '' : 's'} we can check.</div>`) +
       (rest.length
-        ? `<div class="status-line" style="margin-top:14px;">Other 15/70 screens, nearest first:</div>` + rest.map(row).join('')
+        ? `<div class="status-line" style="margin-top:14px;">Checked, nothing on 70mm today:</div>` + rest.map(row).join('')
+        : '') +
+      (failed.length
+        ? `<div class="status-line" style="margin-top:14px;">Couldn't check ${failed.length} venue${failed.length === 1 ? '' : 's'}` +
+          `${failed.some((v) => v.retryable) ? ' &mdash; rate limited, worth retrying' : ''}:</div>` +
+          failed.map((v) => `<div class="imax70-row">
+              <div class="imax70-row-dist">${fmtDist(v.distanceMin)}</div>
+              <div>
+                <div><b>${escapeHtml(v.name)}</b> &middot; ${escapeHtml(v.city)}, ${escapeHtml(v.state)}</div>
+                <div class="imax70-row-times" style="color:var(--warn);">${escapeHtml(v.error)}${v.retryable ? ' (temporary)' : ''}</div>
+              </div>
+            </div>`).join('')
         : '') +
       // Only offered when something was actually skipped, and it says how many
       // -- a bare "search further" button gives no sense of whether it is worth

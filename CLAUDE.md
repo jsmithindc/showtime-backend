@@ -308,6 +308,13 @@ Venues flagged `dedicatedImax` (single-screen museum houses) get NO attribute
 from Atom -- there is one screen, so nothing to disambiguate -- so their
 showings are included but `confirmed: false`.
 
+The panel separates **three outcomes** that used to render identically as an
+absent venue: showings found, checked-but-nothing-on-70mm (a real answer), and
+couldn't-check (not an answer). A failure carries its reason and a `retryable`
+flag for rate limits, because a 429 is worth trying again and a missing key is
+not. Cached pages are read BEFORE the credential check, so an exhausted
+Firecrawl key doesn't blank out venues already answered today.
+
 **With `only70mm=true` it lists a venue's actual 70mm showings**, which is real
 data rather than inference for two chains: AMC exposes an `IMAX70MM` attribute
 code (distinct from a plain `70MM` print -- both appear at Lincoln Square on the
