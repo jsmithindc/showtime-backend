@@ -190,6 +190,14 @@ app.get("/api/imax-70mm", async (req, res) => {
   // it, because "nearest 70mm screen" and "I will fly for this" are both real
   // questions and only the first is the common one.
   const maxMiles = req.query.maxMiles === "all" ? Infinity : (Number(req.query.maxMiles) || 200);
+  // venues=<comma-separated names>: check only these, at any distance. Lets the
+  // UI list the far venues cheaply and then look up just the ones the user
+  // picks, instead of all-or-nothing.
+  const onlyVenues = String(req.query.venues || "").split(",").map((x) => x.trim()).filter(Boolean);
+  // priceVenue=<name>: run the chain's real pricing for that venue's showings.
+  // Separate from the listing because for Regal it means the createOrder cart
+  // dance, which is the expensive step this app spends most of its care on.
+  const priceVenue = String(req.query.priceVenue || "").trim();
   const originLat = Number(lat), originLng = Number(lng);
   if (!Number.isFinite(originLat) || !Number.isFinite(originLng)) {
     return res.status(400).json({ error: "lat and lng are required" });
@@ -221,7 +229,11 @@ app.get("/api/imax-70mm", async (req, res) => {
 
     await Promise.all(venues.map((v) => priceLimit(async () => {
       v.checked = false;
-      if (v.distanceMi > maxMiles) { v.tooFar = true; v.showings = null; return; }
+      // An explicit pick overrides the distance gate -- the user asking for a
+      // specific venue has already decided it is worth it.
+      const picked = onlyVenues.length ? onlyVenues.includes(v.name) : null;
+      if (picked === false) { v.notRequested = true; v.showings = null; return; }
+      if (!picked && v.distanceMi > maxMiles) { v.tooFar = true; v.showings = null; return; }
       try {
         if (v.chain === "amc" && v.chainCode) {
           const st = await getAmcShowtimesForTheater({ theatreId: v.chainCode, dateISO });
@@ -229,8 +241,13 @@ app.get("/api/imax-70mm", async (req, res) => {
           const wanted = (st || []).filter((x) => !movie || matchesMovie(x.movieName, movie));
           v.showings = wanted
             .filter((x) => !only70mm || (x.attributeCodes || []).includes("IMAX70MM"))
+            // AMC hands over the real price AND its own purchase link on the
+            // same response the showtimes came from, so both are free here --
+            // no cart, no extra call.
             .map((x) => ({ time: x.time, format: x.format, movieName: x.movieName,
-                           imax70mm: (x.attributeCodes || []).includes("IMAX70MM"), confirmed: true }));
+                           imax70mm: (x.attributeCodes || []).includes("IMAX70MM"), confirmed: true,
+                           price: x.price ?? null, priceBeforeFee: x.priceBeforeFee ?? null,
+                           buyUrl: x.purchaseUrl || null }));
         } else if (v.chain === "regal" && v.chainCode) {
           // costTracker is required, not optional -- omitting it threw
           // "Cannot read properties of undefined (reading 'total')" and
@@ -242,12 +259,19 @@ app.get("/api/imax-70mm", async (req, res) => {
           const wanted = (perfs || []).filter((x) => !movie || matchesMovie(x.movieName, movie));
           // Regal spells it in the format string: "IMAX IMAX 70mm".
           const is70 = (x) => /imax\s*70\s*-?\s*mm/i.test(x.format || "");
+          const [ry, rm, rd] = dateISO.split("-");
           v.showings = wanted
             .filter((x) => !only70mm || is70(x))
             // showTime, not startTimeRaw -- the latter is undefined on this
             // shape and every Regal row rendered a blank time.
-            .map((x) => ({ time: String(x.showTime || "").slice(11, 16) || x.showTime,
-                           format: x.format, movieName: x.movieName, imax70mm: is70(x), confirmed: true }));
+            .map((x) => ({ time: String(x.showTime || "").slice(0, 5),
+                           format: x.format, movieName: x.movieName, imax70mm: is70(x), confirmed: true,
+                           // Regal's price needs the cart dance, so it is not
+                           // fetched here; the link is free to build.
+                           price: null,
+                           buyUrl: x.movieId
+                             ? `https://www.regmovies.com/movies/${toUrlSlug(x.movieName)}-${String(x.movieId).toLowerCase()}?date=${rm}-${rd}-${ry}&site=${v.chainCode}&id=${x.performanceId ?? ""}`
+                             : null }));
         } else if (v.chain === "harkins" && v.chainCode && !v.atomSlug) {
           v.checked = true;
           // theatreId (British spelling) is Harkins' own field name, and it is
@@ -287,8 +311,13 @@ app.get("/api/imax-70mm", async (req, res) => {
           // Filtering those to imax70mm would silently drop the venues most
           // certain to be showing film. Included, but not claimed as confirmed.
           const groups = only70mm && !v.dedicatedImax ? wanted.filter((r) => r.imax70mm) : wanted;
+          const atomUrl = `https://www.atomtickets.com/theaters/${v.atomSlug}`;
           v.showings = groups.flatMap((r) => r.times.map((t) => ({
             time: t, movieName: r.movieName, imax70mm: r.imax70mm,
+            // Atom sells these, and it is where the showtime came from, so its
+            // theater page is the honest destination. No per-showtime deep
+            // link is exposed on the page we parse.
+            price: null, buyUrl: atomUrl,
             // Atom states it outright when the attribute is there. Some pages
             // (the Tennessee Aquarium's, for one) list the showing with no
             // format tag at all -- those are reported without the claim.
@@ -302,6 +331,45 @@ app.get("/api/imax-70mm", async (req, res) => {
         v.error = err.message;
       }
     })));
+
+    // Priced only on request, and only for the one venue asked about. Regal is
+    // the case that matters: its price is behind createOrder, so pricing every
+    // venue on every listing would spend the Cloudflare POST budget this app
+    // works hard to protect. AMC's prices already arrived with its showtimes.
+    if (priceVenue) {
+      const target = venues.find((v) => v.name === priceVenue);
+      if (target && target.chain === "regal" && target.chainCode && target.showings) {
+        try {
+          const costTracker = { total: 0, byProvider: {} };
+          const cart = makeRegalCartProvider({ cinemaCode: target.chainCode, costTracker });
+          // Results arrive through onResult as each performance prices, not as
+          // a return value -- this call streams.
+          await getRegalPricedShowtimes({
+            cinemaCode: target.chainCode,
+            movieTitle: target.showings[0].movieName,
+            dateISO, costTracker, cart,
+            onResult(p) {
+              if (p.price == null) return;
+              const at = String(p.time || "").slice(0, 5);
+              const sh = target.showings.find((x) => x.time === at);
+              if (!sh) return;
+              // Regal's API gives the base price; the booking fee is added the
+              // same way the main search does it, so the two agree.
+              const fee = estimateRegalFee(p.format || "Standard");
+              sh.priceBeforeFee = p.price;
+              sh.price = Math.round((p.price + fee) * 100) / 100;
+              sh.estimatedFee = fee;
+              sh.feeStatus = "estimated";
+            },
+          });
+          target.pricedNow = true;
+          console.error(`IMAX 70mm: priced ${target.name} -- ${target.showings.filter((x) => x.price != null).length}/${target.showings.length} showings, ${costTracker.total} credit(s).`);
+        } catch (err) {
+          target.priceError = err.message;
+          console.error(`IMAX 70mm: pricing ${priceVenue} failed:`, err.message);
+        }
+      }
+    }
 
     const withFilm = venues.filter((v) => v.showings && v.showings.length);
     const skippedFar = venues.filter((v) => v.tooFar).length;

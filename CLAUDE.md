@@ -290,6 +290,13 @@ adapter. Validated against Harkins Arizona Mills, where Atom's 70mm times
 (11:45/15:30/19:15/23:00) match Harkins' own "IMAX" sessions exactly and its
 non-70mm times match the "Digital" ones.
 
+The panel lists far venues for free with checkboxes, then `venues=<names>`
+looks up only the ones picked (at any distance -- an explicit pick overrides
+the distance gate), and `priceVenue=<name>` runs real pricing for one venue.
+AMC's prices and purchase links arrive free with its showtimes; Regal's price
+is behind createOrder so it is only fetched on request, which is why the
+"Price these showings" button appears on Regal rows and not AMC ones.
+
 **Only venues within `maxMiles` (default 200) are queried for showtimes.**
 Everything else is still listed with its distance -- just not looked up, since
 a theater 1,500 miles away is not a showing anyone is driving to and each one

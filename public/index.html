@@ -524,6 +524,9 @@
   .imax70-row b { color: var(--ink); }
   .imax70-row-times { margin-top: 2px; font-size: 11px; color: var(--ink-dim); }
   .imax70-row-seats { margin-top: 2px; font-size: 11px; color: var(--best); cursor: help; }
+  .imax70-price { color: var(--stubs-amt); font-weight: 700; }
+  .imax70-buy { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--stub-line); }
+  .imax70-buy:hover { color: var(--gold); }
   .imax70-foot { margin-top: 8px; font-size: 10px; color: var(--ink-dim); opacity: .75; }
   .imax70-seats { margin-top: 5px; font-size: 11px; color: var(--ink-dim); opacity: .95; }
   .imax70-seats b { color: var(--gold); }
@@ -2697,7 +2700,9 @@
   // One question: what 15/70 screens are near me, and what is actually playing
   // on them today. Ignores the search radius on purpose -- someone asking will
   // drive further than for an ordinary showing.
-  async function loadImax70(maxMiles) {
+  let imax70Origin = null;   // remembered so follow-up lookups don't re-geocode
+  async function loadImax70(opts) {
+    const { maxMiles, venues, priceVenue, listOnly } = (typeof opts === 'string' ? { maxMiles: opts } : (opts || {}));
     els.imax70Body.innerHTML = '<div style="font-size:12px; color:var(--ink-dim);">Looking up 70mm IMAX venues&hellip;</div>';
     els.searchBtn.disabled = true;
     try {
@@ -2709,8 +2714,14 @@
         if (!geo || geo.lat == null) throw new Error(geo && geo.error ? geo.error : `couldn't find "${place}"`);
         lat = geo.lat; lng = geo.lng;
       }
+      imax70Origin = { lat, lng };
       const params = new URLSearchParams({ lat, lng, only70mm: 'true' });
       if (maxMiles) params.set('maxMiles', maxMiles);
+      // listOnly=0 miles: return every venue with distances but look nothing
+      // up. Lets "show me the rest" cost nothing.
+      if (listOnly) params.set('maxMiles', '0');
+      if (venues) params.set('venues', venues);
+      if (priceVenue) params.set('priceVenue', priceVenue);
       if (els.searchDate && els.searchDate.value) params.set('date', els.searchDate.value);
       const data = await fetch(`/api/imax-70mm?${params}`).then((r) => r.json());
       if (data.error) throw new Error(data.error);
@@ -2728,14 +2739,19 @@
     const fmtDist = (m) => (m > 180 ? `${Math.round(m / 60)}h drive` : `${m} min`);
 
     const row = (v) => {
-      const times = (v.showings || []).slice(0, 8).map((sh) => {
+      const times = (v.showings || []).slice(0, 10).map((sh) => {
         const t = escapeHtml(String(sh.time || '').slice(0, 5));
-        // An inferred 70mm showing is marked. Harkins reports only "IMAX", so
-        // at a 15/70 house it is probably the film print -- probably is not
-        // the same as confirmed, and the tooltip says which.
-        return sh.confirmed === false
-          ? `<span title="Harkins reports this as IMAX without saying 70mm. At a 15/70 venue it is probably the film print, but unconfirmed.">${t}*</span>`
-          : t;
+        const price = sh.price != null ? ` <span class="imax70-price">$${sh.price.toFixed(2)}</span>` : '';
+        // Marked when the source didn't actually say 70mm -- a single-screen
+        // house has nothing to disambiguate, so it is a strong inference, not
+        // a statement. The tooltip carries the distinction.
+        const star = sh.confirmed === false
+          ? `<span title="This venue has a single IMAX screen, so the showing is almost certainly the film print -- but the source doesn't say 70mm outright.">*</span>`
+          : '';
+        const label = `${t}${star}${price}`;
+        return sh.buyUrl
+          ? `<a href="${escapeHtml(sh.buyUrl)}" target="_blank" rel="noopener" class="imax70-buy">${label}</a>`
+          : label;
       }).join(' &middot; ');
       const films = [...new Set((v.showings || []).map((sh) => sh.movieName).filter(Boolean))];
       return `<div class="imax70-row">
@@ -2745,6 +2761,10 @@
             ${films.length ? `<div class="imax70-row-times">${escapeHtml(films.join(', '))}</div>` : ''}
             ${times ? `<div class="imax70-row-times">${times}</div>` : ''}
             ${v.seating ? `<div class="imax70-row-seats" title="${escapeHtml(v.seating.note || '')}">sit in row ${escapeHtml(v.seating.best)}</div>` : ''}
+            ${(v.showings && v.showings.length && v.showings.every((sh) => sh.price == null) && v.chain === 'regal')
+              ? `<button class="locate-btn imax70-price-btn" data-venue="${escapeHtml(v.name)}" style="margin-top:5px; font-size:11px;">Price these showings</button>`
+              : ''}
+            ${v.priceError ? `<div class="imax70-row-times" style="color:var(--error);">pricing failed: ${escapeHtml(v.priceError)}</div>` : ''}
           </div>
         </div>`;
     };
@@ -2756,6 +2776,9 @@
     // didn't try is a choice the user can undo. Rendering them the same way
     // made a rate-limited lookup indistinguishable from a quiet Tuesday.
     const failed = venues.filter((v) => v.error && !(v.showings && v.showings.length));
+    // Everything we deliberately didn't look up -- too far, or not among the
+    // venues the user picked. Listed for free, with a way to opt in.
+    const notLookedUp = venues.filter((v) => v.tooFar || v.notRequested);
     const rest = venues
       .filter((v) => !(v.showings && v.showings.length) && !v.error && !v.tooFar)
       .slice(0, 6);
@@ -2780,19 +2803,42 @@
       // Only offered when something was actually skipped, and it says how many
       // -- a bare "search further" button gives no sense of whether it is worth
       // the wait, and each of those venues costs a real lookup.
-      (data.skippedFar
-        ? `<div style="margin-top:12px;"><button class="locate-btn" id="imax70WidenBtn" type="button">` +
-          `Also check ${data.skippedFar} venue${data.skippedFar === 1 ? '' : 's'} further than ${data.maxMiles} miles</button></div>`
+      // Two separate offers, because they cost very different things. Listing
+      // the far venues is free; looking them up is a request apiece.
+      (notLookedUp.length
+        ? `<div class="status-line" style="margin-top:14px;">Other 15/70 screens (not checked for showtimes):</div>` +
+          notLookedUp.map((v) => `<div class="imax70-row">
+              <div class="imax70-row-dist">${fmtDist(v.distanceMin)}</div>
+              <div>
+                <div><label style="cursor:pointer;"><input type="checkbox" class="imax70-pick" value="${escapeHtml(v.name)}" style="margin-right:6px;">` +
+                `<b>${escapeHtml(v.name)}</b> &middot; ${escapeHtml(v.city)}, ${escapeHtml(v.state)}</label></div>
+                ${v.seating ? `<div class="imax70-row-seats" title="${escapeHtml(v.seating.note || '')}">sit in row ${escapeHtml(v.seating.best)}</div>` : ''}
+              </div>
+            </div>`).join('') +
+          `<div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">` +
+            `<button class="locate-btn" id="imax70CheckPicked" type="button">Check selected</button>` +
+            `<button class="locate-btn" id="imax70CheckAll" type="button">Check all ${notLookedUp.length}</button>` +
+          `</div>`
         : '') +
-      `<div class="imax70-foot">True 15/70 film projection &mdash; not the digital IMAX in the format filter. ` +
-      (data.skippedFar
-        ? `Showtimes looked up within ${data.maxMiles} miles; venues beyond that are listed but not queried. `
-        : `Distances ignore any radius. `) +
-      `Checked ${checked} of ${venues.length} venues. ` +
-      `* = venue has a single IMAX screen, so the showing is almost certainly the film print, but Atom doesn't say so.</div>`;
+      `<div class="imax70-foot">True 15/70 film projection &mdash; not the digital IMAX in the format filter.</div>`;
 
-    const widen = document.getElementById('imax70WidenBtn');
-    if (widen) widen.addEventListener('click', () => { widen.disabled = true; widen.textContent = 'Checking\u2026'; loadImax70('all'); });
+    const pick = () => [...document.querySelectorAll('.imax70-pick:checked')].map((c) => c.value);
+    const byId = (id) => document.getElementById(id);
+    const busy = (btn, label) => { if (btn) { btn.disabled = true; btn.textContent = label; } };
+    if (byId('imax70CheckPicked')) byId('imax70CheckPicked').addEventListener('click', () => {
+      const chosen = pick();
+      if (!chosen.length) return;
+      busy(byId('imax70CheckPicked'), 'Checking\u2026');
+      loadImax70({ venues: chosen.join(',') });
+    });
+    if (byId('imax70CheckAll')) byId('imax70CheckAll').addEventListener('click', () => {
+      busy(byId('imax70CheckAll'), 'Checking\u2026');
+      loadImax70({ maxMiles: 'all' });
+    });
+    document.querySelectorAll('.imax70-price-btn').forEach((b) => b.addEventListener('click', () => {
+      busy(b, 'Pricing\u2026');
+      loadImax70({ venues: b.dataset.venue, priceVenue: b.dataset.venue });
+    }));
   }
 
   els.searchBtn.addEventListener('click', runCurrentModeSearch);
