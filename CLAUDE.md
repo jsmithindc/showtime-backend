@@ -270,10 +270,18 @@ add releases as 70mm runs are announced.
 The standing "where is my nearest one" question is answered on demand by
 `GET /api/imax-70mm?lat=&lng=[&movie=]`, which **ignores radiusMin** (someone
 asking will drive further than for an ordinary showing) and, given a movie,
-checks the chain-backed venues for showings. AMC/Regal/Harkins are checkable;
-Cinemark's API is movie-scoped and the 8 non-chain venues have no adapter, so
-those report `checked: false` rather than "no showings", which would be a
-different and wrong claim.
+checks the chain-backed venues for showings. 13 of 25 are checkable
+(AMC/Regal/Harkins); Cinemark's API is movie-scoped and the 8 non-chain venues
+have no adapter, so those report `checked: false` rather than "no showings",
+which would be a different and wrong claim -- and the UI stays silent about
+them rather than implying anything.
+
+Surfaced as a **collapsed `<details>` panel under Formats/Chains**, not a third
+top tab. The two tabs are modes of the SAME search (same inputs, priced
+showtime cards out); this has different inputs, ignores the radius, and is
+asked rarely, so a tab would imply a parity it doesn't have. It sits under the
+location field because that is the input it depends on, and fetches on first
+open rather than on page load.
 
 Four venues carry **firsthand seating notes** (`seating: { best, good,
 tooClose, note }`), shown under the venue line. Row letters are per-venue and

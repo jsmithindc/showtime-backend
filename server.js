@@ -186,7 +186,12 @@ app.get("/api/imax-70mm", async (req, res) => {
           v.showings = (st || []).filter((x) => matchesMovie(x.movieName, movie))
             .map((x) => ({ time: x.startTime || x.time, format: x.format }));
         } else if (v.chain === "regal" && v.chainCode) {
-          const perfs = await getRegalShowtimesForTheater({ cinemaCode: v.chainCode, dateISO });
+          // costTracker is required, not optional -- omitting it threw
+          // "Cannot read properties of undefined (reading 'total')" and
+          // silently dropped all 8 Regal venues from the checked set.
+          const perfs = await getRegalShowtimesForTheater({
+            cinemaCode: v.chainCode, dateISO, costTracker: { total: 0, byProvider: {} },
+          });
           v.checked = true;
           v.showings = (perfs || []).filter((x) => matchesMovie(x.movieName, movie))
             .map((x) => ({ time: x.startTimeRaw || x.time, format: x.format }));

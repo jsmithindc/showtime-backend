@@ -517,6 +517,13 @@
   /* Promoted: a 70mm print is actually playing, which is the rare case this
      whole feature exists for. */
   .imax70-live { border-color: var(--gold); background: rgba(226,165,69,0.10); }
+  .imax70-row { display: flex; gap: 10px; padding: 7px 0; border-top: 1px solid var(--stub-line); font-size: 12px; }
+  .imax70-row:first-of-type { border-top: 0; }
+  .imax70-row-dist { flex: 0 0 74px; color: var(--gold); font-weight: 700; }
+  .imax70-row b { color: var(--ink); }
+  .imax70-row-times { margin-top: 2px; font-size: 11px; color: var(--ink-dim); }
+  .imax70-row-seats { margin-top: 2px; font-size: 11px; color: var(--best); cursor: help; }
+  .imax70-foot { margin-top: 8px; font-size: 10px; color: var(--ink-dim); opacity: .75; }
   .imax70-seats { margin-top: 5px; font-size: 11px; color: var(--ink-dim); opacity: .95; }
   .imax70-seats b { color: var(--gold); }
   .imax70-tag {
@@ -758,6 +765,26 @@
       </div>
     </details>
 
+    <!-- A location lookup, not a search mode. Deliberately NOT a third top tab:
+         those two are modes of the SAME search (same inputs, priced showtime
+         cards out). This has different inputs, ignores the radius, and is asked
+         once in a blue moon -- a tab would imply parity it doesn't have.
+         Collapsed by default, so it costs nothing to anyone not asking. -->
+    <details class="filter-section" id="imax70Section">
+      <summary>
+        <span class="filter-label">
+          <span class="filter-chevron">&#9654;</span>
+          IMAX 70mm
+        </span>
+        <span class="filter-status" id="imax70Status">nearest 15/70 screens</span>
+      </summary>
+      <div class="filter-body">
+        <div id="imax70Body" style="font-size:12px; color:var(--ink-dim);">
+          Open to find your nearest true IMAX 70mm (15/70) film projection.
+        </div>
+      </div>
+    </details>
+
     <button class="search-btn" id="searchBtn" type="button">Find showtimes</button>
   </div>
 
@@ -792,6 +819,9 @@
     searchBtn: document.getElementById('searchBtn'),
     statusLine: document.getElementById('statusLine'),
     pageFooter: document.getElementById('pageFooter'),
+    imax70Section: document.getElementById('imax70Section'),
+    imax70Status: document.getElementById('imax70Status'),
+    imax70Body: document.getElementById('imax70Body'),
     banners: document.getElementById('banners'),
     results: document.getElementById('results'),
   };
@@ -2652,6 +2682,111 @@
 
   function runCurrentModeSearch() {
     return searchMode === 'window' ? runWindowSearch() : runSearch();
+  }
+
+  // ---- IMAX 70mm panel -------------------------------------------------
+  // Fetched on first open rather than on page load: most sessions never ask,
+  // and it costs a routing call. Re-fetched when the location or the selected
+  // film changes, so it can't quietly answer for a place you've moved on from.
+  let imax70LastKey = null;
+  let imax70Loading = false;
+
+  function imax70CurrentKey() {
+    const movie = searchMode === 'window' ? '' : (els.movie ? els.movie.value.trim() : '');
+    return `${els.lat.value}|${els.lng.value}|${els.place.value.trim()}|${movie}`;
+  }
+
+  async function loadImax70() {
+    const key = imax70CurrentKey();
+    if (imax70Loading || key === imax70LastKey) return;
+    imax70Loading = true;
+    els.imax70Status.textContent = 'looking up...';
+    try {
+      let lat = els.lat.value, lng = els.lng.value;
+      if (!lat || !lng) {
+        const place = els.place.value.trim();
+        if (!place) {
+          els.imax70Body.textContent = 'Enter a location above first.';
+          els.imax70Status.textContent = 'needs a location';
+          return;
+        }
+        const geo = await fetch(`/api/geocode?place=${encodeURIComponent(place)}`).then((r) => r.json());
+        if (!geo || geo.lat == null) throw new Error(geo && geo.error ? geo.error : `couldn't find "${place}"`);
+        lat = geo.lat; lng = geo.lng;
+      }
+      const movie = searchMode === 'window' ? '' : (els.movie ? els.movie.value.trim() : '');
+      const params = new URLSearchParams({ lat, lng });
+      if (movie) params.set('movie', movie);
+      if (els.searchDate && els.searchDate.value) params.set('date', els.searchDate.value);
+
+      const data = await fetch(`/api/imax-70mm?${params}`).then((r) => r.json());
+      if (data.error) throw new Error(data.error);
+      renderImax70(data, movie);
+      imax70LastKey = key;
+    } catch (err) {
+      els.imax70Body.textContent = `Couldn't look that up: ${err.message}`;
+      els.imax70Status.textContent = 'failed';
+    } finally {
+      imax70Loading = false;
+    }
+  }
+
+  function renderImax70(data, movie) {
+    const venues = data.venues || [];
+    // A film-specific ask reorders by "does it actually have the film", because
+    // the nearest venue that isn't showing it is not the answer to that
+    // question. Distance still breaks ties.
+    const withFilm = movie ? venues.filter((v) => v.showings && v.showings.length) : [];
+    const shown = movie && withFilm.length ? withFilm : venues;
+
+    // The general question is the default reading of this panel; film info is
+    // additive. Saying "none showing it" when only 5 of 25 venues could be
+    // checked claims knowledge we don't have.
+    const checked = venues.filter((v) => v.checked).length;
+    els.imax70Status.textContent = withFilm.length
+      ? `${withFilm.length} showing it`
+      : `${venues.length} venues`;
+
+    const fmtDist = (m) => (m > 180 ? `${Math.round(m / 60)}h drive` : `${m} min`);
+    const rows = shown.slice(0, 8).map((v) => {
+      const times = v.showings && v.showings.length
+        ? `<div class="imax70-row-times">${v.showings.slice(0, 6).map((s) => escapeHtml(String(s.time || '').slice(0, 5))).join(' &middot; ')}</div>`
+        : '';
+      const seats = v.seating
+        ? `<div class="imax70-row-seats" title="${escapeHtml(v.seating.note || '')}">sit in row ${escapeHtml(v.seating.best)}</div>`
+        : '';
+      // Only speak about a venue we actually checked. Cinemark's API is
+      // movie-scoped and the museum venues have no adapter at all, so a row
+      // saying "not showing it" for those would be a claim we can't support --
+      // and on most rows it was just noise. Unchecked venues say nothing.
+      const status = movie && v.checked && !(v.showings && v.showings.length)
+        ? `<div class="imax70-row-times" style="opacity:.7;">not showing it</div>`
+        : '';
+      return `<div class="imax70-row">
+          <div class="imax70-row-dist">${fmtDist(v.distanceMin)}</div>
+          <div>
+            <div><b>${escapeHtml(v.name)}</b> &middot; ${escapeHtml(v.city)}, ${escapeHtml(v.state)}</div>
+            ${times}${status}${seats}
+          </div>
+        </div>`;
+    }).join('');
+
+    const note = withFilm.length
+      ? `<div style="margin-bottom:6px;">Showing <b>${escapeHtml(movie)}</b>, nearest first:</div>`
+      : `<div style="margin-bottom:6px;">Nearest 15/70 screens${
+          movie && checked ? ` &mdash; none of the ${checked} we can check are showing <b>${escapeHtml(movie)}</b>` : ''
+        }:</div>`;
+    els.imax70Body.innerHTML = note + rows +
+      `<div class="imax70-foot">True 15/70 film projection &mdash; not the digital IMAX in the format filter. ` +
+      `Distances ignore your search radius.` +
+      (movie && checked < venues.length
+        ? ` Showtimes checkable at ${checked} of ${venues.length} venues; the rest have no adapter.`
+        : '') +
+      `</div>`;
+  }
+
+  if (els.imax70Section) {
+    els.imax70Section.addEventListener('toggle', () => { if (els.imax70Section.open) loadImax70(); });
   }
 
   els.searchBtn.addEventListener('click', runCurrentModeSearch);
