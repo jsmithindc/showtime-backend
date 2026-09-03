@@ -2799,7 +2799,7 @@
             </div>
           </div>`;
       }).join('');
-      return `<div class="imax70-row">
+      return `<div class="imax70-row"${v.priceError ? ` title="${escapeHtml(v.priceError)}"` : ''}>
           <div class="imax70-row-dist">${fmtDist(v.distanceMin)}</div>
           <div>
             <div><b>${escapeHtml(v.name)}</b> &middot; ${escapeHtml(v.city)}, ${escapeHtml(v.state)}</div>
@@ -2807,9 +2807,21 @@
             ${times ? `<div class="imax70-row-times">${times}</div>` : ''}
             ${v.seating ? `<div class="imax70-row-seats" title="${escapeHtml(v.seating.note || '')}">sit in row ${escapeHtml(v.seating.best)}</div>` : ''}
             ${(v.showings && v.showings.length && v.showings.every((sh) => sh.price == null) && v.chain === 'regal')
-              ? `<button class="locate-btn imax70-price-btn" data-venue="${escapeHtml(v.name)}" style="margin-top:5px; font-size:11px;">Price these showings</button>`
+              ? `<button class="locate-btn imax70-price-btn" data-venue="${escapeHtml(v.name)}" style="margin-top:5px; font-size:11px;">` +
+                // Relabelled after a failure. The button legitimately comes back
+                // -- pricing is retryable -- but an unchanged label made a failed
+                // attempt look like a click that did nothing.
+                `${v.priceError ? 'Try pricing again' : 'Price these showings'}</button>`
               : ''}
-            ${v.priceError ? `<div class="imax70-row-times" style="color:var(--error);">pricing failed: ${escapeHtml(v.priceError)}</div>` : ''}
+            ${v.priceError
+              ? `<div class="imax70-row-times" style="color:var(--error);">Couldn't price these: ${escapeHtml(
+                  // The raw chain error is a paragraph about proxy providers.
+                  // Say the useful part; the detail stays in the tooltip.
+                  /proxy providers failed|openTab|createOrder/i.test(v.priceError)
+                    ? "Regal's pricing service is unreachable right now"
+                    : v.priceError
+                )}</div>`
+              : ''}
           </div>
         </div>`;
     };
