@@ -80,6 +80,17 @@ while the same search with Regal off finished in 1.5s. Only GETs are pooled --
 on POST volume. Set `CAMOFOX_TAB_POOL=1` to restore the old single-tab
 behaviour.
 
+A 5xx from `/tabs` gets **one retry after 25s** before counting as a failure.
+The host's own service log explains why: `launching camoufox` -> `tab create
+failed` exactly 30s later -> `camoufox launched` at ~52s. Its tab-create
+timeout is shorter than its own cold start, so the first request during a
+browser restart always fails and the next one usually succeeds. Retrying is
+cheaper than falling through here, which is unusual: nothing else can serve
+`createOrder` (Bright Data's async path times out at ~60s, Firecrawl cannot
+relay a POST body), so the alternative to waiting is not another provider, it
+is spending 60s to fail anyway. **If that host's tab-create timeout is
+configurable, raising it above ~60s fixes this at the source.**
+
 It also carries a **circuit breaker**: after 3 consecutive tab-open failures it
 declines every URL via `supports()` for 60s, so the chain skips it without
 opening a socket. Any success resets it. This exists because a Camofox outage
