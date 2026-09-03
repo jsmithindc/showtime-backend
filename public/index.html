@@ -533,6 +533,13 @@
   .imax70-buy { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--stub-line); }
   .imax70-buy:hover { color: var(--gold); }
   .imax70-foot { margin-top: 8px; font-size: 10px; color: var(--ink-dim); opacity: .75; }
+  #imax70Intro {
+    margin: 2px 0 16px;
+    max-width: 68ch;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--ink-dim);
+  }
   .imax70-seats { margin-top: 5px; font-size: 11px; color: var(--ink-dim); opacity: .95; }
   .imax70-seats b { color: var(--gold); }
   .imax70-tag {
@@ -668,6 +675,10 @@
            out); this is a location lookup that ignores the radius. -->
       <button class="chip mode-aside" id="modeImaxBtn" type="button">IMAX 70mm near me</button>
     </div>
+
+    <!-- Shown only on the IMAX 70mm tab. Deliberately OUTSIDE #imax70Body,
+         whose contents are replaced wholesale on every render. -->
+    <p id="imax70Intro" style="display:none;">IMAX 70mm offers the largest and highest resolution film format available, providing an incredibly immersive viewing experience with up to 18K equivalent resolution and a unique aspect ratio of 1.43:1. This format captures more image information, making visuals appear sharper and more detailed on colossal screens.</p>
 
     <div id="specificMovieFields">
       <div class="row">
@@ -824,6 +835,7 @@
     statusLine: document.getElementById('statusLine'),
     pageFooter: document.getElementById('pageFooter'),
     imax70Body: document.getElementById('imax70Body'),
+    imax70Intro: document.getElementById('imax70Intro'),
     banners: document.getElementById('banners'),
     results: document.getElementById('results'),
   };
@@ -906,6 +918,7 @@
     // The IMAX tab owns its own output area; the shared result machinery is
     // for the two search modes.
     els.imax70Body.style.display = isImax ? '' : 'none';
+    if (els.imax70Intro) els.imax70Intro.style.display = isImax ? '' : 'none';
     els.results.style.display = isImax ? 'none' : '';
     els.statusLine.style.display = isImax ? 'none' : '';
     if (els.pageFooter) els.pageFooter.style.display = isImax ? 'none' : '';
