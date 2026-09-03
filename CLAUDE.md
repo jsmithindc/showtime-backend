@@ -67,6 +67,16 @@ Apify's plain Super Scraper actor (`apify.js`, distinct from
 deprioritized — confirmed blocked by Regal's bot detection (real 403s in
 the actor's own log). Don't re-add it without new evidence it's unblocked.
 
+**The Camofox providers are built from one factory**
+(`lib/proxyProviders/camofox-factory.js`). `camofox-regal` and
+`camofox-cinemark` are ~15-line instantiations of it differing only in name,
+origin, host and POST gap -- everything below (pool, breaker, GET batching,
+POST queue) is shared, because both sites need identical machinery and
+maintaining two copies of behaviour this hard-won would be a liability.
+Instances are fully independent: Cinemark being blocked cannot open Regal's
+circuit or consume its tabs. The measurements quoted in that file were all
+taken against Regal and are kept verbatim rather than generalised.
+
 `camofox-regal` keeps a **pool** of regmovies.com tabs (`CAMOFOX_TAB_POOL`,
 default 4). Each is a real Firefox tab and opening one loads regmovies.com to
 clear Cloudflare, which the Camofox host appears to serialize -- so raising
@@ -549,12 +559,12 @@ the point, and a matching ZIP is strong confirmation.
   spacing cannot clear it -- it only spreads guaranteed failures over a longer
   window. `getTicketPricing()` now trips a breaker on the first challenge and
   skips the rest for `CINEMARK_CHALLENGE_COOLDOWN_MS` (120s), turning twenty
-  certain failures into one. The pacing is kept because it plausibly avoids
-  re-tripping the original 429, but it is unproven and is NOT the fix. A real
-  fix means not using Render's IP -- routing Cinemark through Camofox (which
-  would need a tab parked on cinemark.com, since `camofox-regal` declares
-  regmovies.com only) or a residential proxy. Note the learned price model
-  already covers the gap with estimates where a Cinemark bucket exists.
+  certain failures into one. **The actual fix is `camofox-cinemark`**: Cinemark
+  was the last chain still requested from Render's IP, and it now goes through
+  Camofox on the residential connection, which is exactly why Regal works from
+  the same host. The pacing and the breaker are kept for the direct path, which
+  is still the fallback when Camofox isn't configured. Note the learned price
+  model also covers the gap with estimates where a Cinemark bucket exists.
 - **Regal ticket types do not always fill `LongDescription`.** Colorado Center
   9's IMAX 70mm ticket arrives as `{Description: "General Admission",
   LongDescription: "", PriceInCents: 3199}` -- so a matcher reading only
