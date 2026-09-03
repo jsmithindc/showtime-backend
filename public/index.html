@@ -2159,7 +2159,7 @@
           ${opts.showMovieName ? `<div class="movie-name">${escapeHtml(r.movieName)}${r.runtimeMinutes ? ` <span class="runtime">(${r.runtimeMinutes} min)</span>` : ''}</div>
           ${ratingsHtml(r.ratings)}` : ''}
           <div class="card-top">
-            <span class="theater-name">${escapeHtml(chainFirstName(r.theaterName))}</span>
+            <span class="theater-name" title="${escapeHtml(chainFirstName(r.theaterName))}">${escapeHtml(chainFirstName(r.theaterName))}</span>
             <span class="dist${searchedRadiusMin && r.distanceMin > searchedRadiusMin ? ' dist-over' : ''}"${
               searchedRadiusMin && r.distanceMin > searchedRadiusMin
                 ? ` title="Just outside your ${searchedRadiusMin}-minute radius. Kept because drive times are free-flow estimates with no traffic or parking, and a minute either way is inside that margin."`

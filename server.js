@@ -1594,6 +1594,16 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
             // and decode HTML entities (&amp; -> &) baked into the theater list.
             const rawName = t.name.includes(" | ") ? t.name.split(" | ").pop() : t.name;
             let cleanName = rawName.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+            // Cinemark's own list carries SEO-shaped names that bury the real
+            // one behind a description: "Cinemark Movie Theater In Kenosha,
+            // Wisconsin Cinemark Tinseltown USA Kenosha" and "Cinemark Carson
+            // Movie Theater in SouthBay Pavilion Cinemark Carson XD and
+            // ScreenX". In every case seen the actual theater name starts at
+            // the LAST "Cinemark", so trim to it. A name mentioning the chain
+            // once is left alone, which covers the ordinary ones like
+            // "Cinemark Century Deer Park 16".
+            const lastChain = cleanName.toLowerCase().lastIndexOf("cinemark");
+            if (lastChain > 0) cleanName = cleanName.slice(lastChain);
             if (!/^cinemark\b/i.test(cleanName)) cleanName = "Cinemark " + cleanName;
             cinemarkDirectTheaters.push({ ...t, name: cleanName, distanceMin: dMin });
           }
