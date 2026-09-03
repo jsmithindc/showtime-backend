@@ -3395,7 +3395,11 @@ app.get("/api/movies", async (req, res) => {
               if (estimatedMinutesAway(originLat, originLng, t.lat, t.lng) <= Number(radiusMin))
                 amcTheatersHere.push(t);
             }
-          } catch { /* skip state on error */ }
+          } catch (err) {
+            // One state failing shouldn't stop the others, but silence here
+            // hid a bad vendor key just as effectively.
+            console.error(`/api/movies: AMC theater list for a state failed — ${err.message}`);
+          }
         })
       );
       if (amcTheatersHere.length > 0) {
@@ -3406,7 +3410,16 @@ app.get("/api/movies", async (req, res) => {
           sts.map((s) => s.movieName).filter(Boolean).forEach((title) => chainMovieTitles.add(title));
           if (chainMovieTitles.size > 0)
             console.error(`/api/movies: AMC direct — ${chainMovieTitles.size} title(s) from ${biggest.name}`);
-        } catch { /* silent — Regal cache or SerpApi may still contribute */ }
+        } catch (err) {
+          // Was silent. Falling through to Regal/SerpApi is still right, but
+          // swallowing the reason meant an empty movie dropdown had no
+          // explanation anywhere in the log -- and the AMC theater LISTS come
+          // from the shared cache, so discovery keeps logging "AMC direct: N
+          // theaters in CO" from cache while this live call is the thing
+          // actually failing. A bad or missing AMC_VENDOR_KEY looks exactly
+          // like this.
+          console.error(`/api/movies: AMC showtimes for "${biggest.name}" failed, falling through — ${err.message}`);
+        }
       }
     } catch (err) {
       console.error("/api/movies: AMC direct fetch failed:", err.message);
