@@ -555,8 +555,8 @@
     text-transform: uppercase;
   }
 
-  #timingBar {
-    /* NOT display:none here -- renderTiming() reveals this by setting
+  #timingBar, #imax70Timing {
+    /* NOT display:none here -- createTiming() reveals these by setting
        style.display = '', which only overrides an INLINE none. Putting the
        hide in the stylesheet made the bar permanently invisible. */
     margin: 22px 0 4px;
@@ -582,8 +582,15 @@
     font-size: 12px;
     font-weight: 700;
     color: var(--best);
-    animation: doneIn 0.32s cubic-bezier(.2,.9,.3,1.4), doneOut 0.8s ease-in 3.6s forwards;
+    /* Fade-in only. The fade-OUT used to be a second animation with a 3.6s
+       delay, but a delayed CSS animation is timed from when it was applied --
+       and this chip is re-created whenever a render rewrites the count line it
+       sits in, so the delay ran ahead of the element and the chip vanished
+       after well under a second. The exit is a class JS adds instead, so the
+       visible time is the same no matter when the element was made. */
+    animation: doneIn 0.32s cubic-bezier(.2,.9,.3,1.4);
   }
+  .search-done.leaving { animation: doneOut 0.8s ease-in forwards; }
   .search-done::before { content: "\2713"; font-size: 13px; }
   @keyframes doneIn  { from { opacity: 0; transform: translateY(-5px) scale(0.94); } to { opacity: 1; transform: none; } }
   @keyframes doneOut { to { opacity: 0; } }
@@ -596,7 +603,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .search-done { animation: doneOut 0.8s ease-in 3.6s forwards; }
+    .search-done { animation: none; }
     .results-settled { animation: none; }
   }
   /* Learned estimate, not a real price: same size so the layout doesn't jump,
@@ -794,6 +801,9 @@
 
     <!-- Results for the IMAX 70mm tab render here. -->
     <div id="imax70Body" style="display:none;"></div>
+    <!-- This tab keeps its OWN timing bar: #timingBar's content travels in the
+         mode snapshot, which covers the two search modes only. -->
+    <div id="imax70Timing" style="display:none;"></div>
 
     <button class="search-btn" id="searchBtn" type="button">Find showtimes</button>
   </div>
@@ -836,6 +846,7 @@
     pageFooter: document.getElementById('pageFooter'),
     imax70Body: document.getElementById('imax70Body'),
     imax70Intro: document.getElementById('imax70Intro'),
+    imax70Timing: document.getElementById('imax70Timing'),
     banners: document.getElementById('banners'),
     results: document.getElementById('results'),
   };
@@ -859,6 +870,10 @@
       statusLine: els.statusLine.innerHTML,
       timingHtml: timingBar ? timingBar.innerHTML : '',
       timingShown: timingBar ? timingBar.style.display !== 'none' : false,
+      // The chain report describes ONE search. Left out of the snapshot it
+      // simply stayed put, so a finished movie search's report sat above the
+      // free-time tab's results describing a search that tab never ran.
+      footer: els.pageFooter ? els.pageFooter.innerHTML : '',
       renderData: lastRenderData,
       renderOpts: lastRenderOpts,
       activeFormats: new Set(activeResultFormats),
@@ -881,6 +896,7 @@
       // has no elapsed time to report.
       timingBar.style.display = snap && snap.timingShown ? '' : 'none';
     }
+    if (els.pageFooter) els.pageFooter.innerHTML = snap ? (snap.footer || '') : '';
     lastRenderData = snap ? snap.renderData : null;
     lastRenderOpts = snap ? snap.renderOpts : null;
     activeResultFormats = snap ? new Set(snap.activeFormats) : new Set();
@@ -919,6 +935,9 @@
     // for the two search modes.
     els.imax70Body.style.display = isImax ? '' : 'none';
     if (els.imax70Intro) els.imax70Intro.style.display = isImax ? '' : 'none';
+    // Leaving the tab hides its bar; coming back shows the last lookup's
+    // timings again, which is the same thing the snapshot does for the others.
+    if (els.imax70Timing) els.imax70Timing.style.display = (isImax && els.imax70Timing.textContent) ? '' : 'none';
     els.results.style.display = isImax ? 'none' : '';
     els.statusLine.style.display = isImax ? 'none' : '';
     if (els.pageFooter) els.pageFooter.style.display = isImax ? 'none' : '';
@@ -1191,10 +1210,12 @@
     const countEl = els.statusLine.querySelector('.film-hero-count');
     if (countEl && shell === lastHeroShell) {
       countEl.innerHTML = countLine;
+      applySearchDoneChip();
       return;
     }
     lastHeroShell = shell;
     els.statusLine.innerHTML = filmHeroHtml(data, { countLine });
+    applySearchDoneChip();
   }
 
   function ratingsHtml(r) {
@@ -1494,24 +1515,7 @@
     // statusLine at this point wiped that header off the page microseconds
     // after it was drawn.
 
-    // Timing bar
-    const timingBar = document.getElementById('timingBar');
-    const t0 = Date.now();
-    let timingFirstResults = null, timingFirstRegal = null, timingDone = null;
-    let timingTick = null;
-    const renderTiming = (done) => {
-      const elapsed = (ms) => (ms / 1000).toFixed(1) + 's';
-      const now = Date.now();
-      const parts = [`elapsed: ${elapsed(now - t0)}`];
-      if (timingFirstResults !== null) parts.push(`first results: ${elapsed(timingFirstResults - t0)}`);
-      if (timingFirstRegal !== null) parts.push(`first Regal: ${elapsed(timingFirstRegal - t0)}`);
-      if (timingDone !== null) parts.push(`done: ${elapsed(timingDone - t0)}`);
-      timingBar.style.display = '';
-      timingBar.textContent = parts.join('  ·  ');
-      if (done && timingTick) { clearInterval(timingTick); timingTick = null; }
-    };
-    timingTick = setInterval(() => renderTiming(false), 250);
-    renderTiming(false);
+    const timing = createTiming(document.getElementById('timingBar'));
 
     // When the user typed a place/zip instead of coordinates, geocode it
     // ONCE here before firing both /api/search and /api/search-regal.
@@ -1670,7 +1674,7 @@
 
       searchEs.addEventListener('result', (e) => {
         try {
-          if (timingFirstResults === null) { timingFirstResults = Date.now(); renderTiming(false); }
+          timing.mark('first results');
           searchResults.push(JSON.parse(e.data));
           renderMerged();
         } catch (err) { console.error('search SSE result parse error:', err); }
@@ -1678,7 +1682,7 @@
 
       searchEs.addEventListener('done', (e) => {
         try { searchMeta = { ...searchMeta, ...JSON.parse(e.data) }; } catch (err) {}
-        if (timingFirstResults === null) { timingFirstResults = Date.now(); }
+        timing.mark('first results');
         // Both flags feed one shared note, but each stream still clears its own
         // as it finishes so the note disappears the moment the LAST one is
         // done -- not whenever the join below happens to run.
@@ -1709,7 +1713,7 @@
       regalEs.addEventListener('result', (e) => {
         try {
           const result = JSON.parse(e.data);
-          if (timingFirstRegal === null) { timingFirstRegal = Date.now(); renderTiming(false); }
+          timing.mark('first Regal');
           regalResults.push(result);
           renderMerged();
         } catch (err) {
@@ -1765,8 +1769,7 @@
     } finally {
       els.searchBtn.disabled = false;
       els.searchBtn.textContent = searchMode === 'window' ? 'Find what fits' : 'Find showtimes';
-      timingDone = Date.now();
-      renderTiming(true);
+      timing.finish();
     }
   }
 
@@ -1830,6 +1833,9 @@
     els.searchBtn.disabled = true;
     els.searchBtn.textContent = 'Searching...';
     els.statusLine.textContent = 'Checking what fits nearby...';
+    // One request rather than two streams, so this reports elapsed and done
+    // without a "first results" mark -- there is no partial arrival to name.
+    const timing = createTiming(document.getElementById('timingBar'));
 
     try {
       const res = await fetch(`/api/window-search?${params.toString()}`);
@@ -1848,23 +1854,80 @@
     } finally {
       els.searchBtn.disabled = false;
       els.searchBtn.textContent = 'Find what fits';
+      timing.finish();
       notifySearchComplete(lastRenderData?.results?.length ?? 0);
       flashSearchComplete();
     }
   }
 
+  // One timing implementation for all three searches, so they report the same
+  // way. The caller owns the element it draws into: the two search modes share
+  // #timingBar (whose per-mode content travels in the mode snapshot), while the
+  // IMAX tab draws into its own, since that tab sits outside that machinery.
+  function createTiming(el) {
+    if (!el) return { mark() {}, finish() {}, stop() {} };
+    const t0 = Date.now();
+    const marks = [];              // [label, timestamp], in the order they happened
+    let doneAt = null, tick = null;
+    const fmt = (ms) => (ms / 1000).toFixed(1) + 's';
+    const render = () => {
+      const parts = [`elapsed: ${fmt((doneAt === null ? Date.now() : doneAt) - t0)}`];
+      for (const [label, at] of marks) parts.push(`${label}: ${fmt(at - t0)}`);
+      if (doneAt !== null) parts.push(`done: ${fmt(doneAt - t0)}`);
+      el.style.display = '';
+      el.textContent = parts.join('  \u00b7  ');
+    };
+    const stop = () => { if (tick) { clearInterval(tick); tick = null; } };
+    tick = setInterval(render, 250);
+    render();
+    return {
+      // First call per label wins -- these record when something first
+      // happened, not the last time it did.
+      mark(label) {
+        if (marks.some(([l]) => l === label)) return;
+        marks.push([label, Date.now()]);
+        render();
+      },
+      finish() { if (doneAt === null) doneAt = Date.now(); render(); stop(); },
+      stop,
+    };
+  }
+
   // Marks the moment every chain has reported. Placed on the count line, which
   // is where the eye already is after a search, and removed after a few seconds
   // so it doesn't become permanent furniture.
-  function flashSearchComplete() {
+  // When the last search finished, and how long the chip stays up.
+  let searchDoneAt = 0;
+  const SEARCH_DONE_MS = 4600;
+  const SEARCH_DONE_FADE_MS = 800;   // matches .search-done.leaving's animation
+
+  // The chip lives inside the count line, which every render rewrites -- so a
+  // render arriving after the search finished silently deleted it, which is
+  // why it so often wasn't seen. Rather than depend on nothing re-rendering,
+  // re-apply it after a render whenever its window is still open.
+  function applySearchDoneChip() {
+    if (!searchDoneAt || Date.now() - searchDoneAt > SEARCH_DONE_MS - SEARCH_DONE_FADE_MS) return;
     const host = document.querySelector('.film-hero-count') || els.statusLine;
-    if (!host) return;
-    host.querySelectorAll('.search-done').forEach((n) => n.remove());
+    if (!host || host.querySelector('.search-done')) return;
     const chip = document.createElement('span');
     chip.className = 'search-done';
     chip.textContent = 'Search complete';
     host.appendChild(chip);
-    setTimeout(() => chip.remove(), 4600);
+  }
+
+  function flashSearchComplete() {
+    const host = document.querySelector('.film-hero-count') || els.statusLine;
+    if (!host) return;
+    searchDoneAt = Date.now();
+    document.querySelectorAll('.search-done').forEach((n) => n.remove());
+    applySearchDoneChip();
+    setTimeout(() => {
+      document.querySelectorAll('.search-done').forEach((n) => n.classList.add('leaving'));
+    }, SEARCH_DONE_MS - SEARCH_DONE_FADE_MS);
+    setTimeout(() => {
+      searchDoneAt = 0;
+      document.querySelectorAll('.search-done').forEach((n) => n.remove());
+    }, SEARCH_DONE_MS);
     if (els.results) {
       els.results.classList.remove('results-settled');
       void els.results.offsetWidth;          // restart the animation on a re-run
@@ -2344,6 +2407,7 @@
       els.statusLine.innerHTML = allResults.length
         ? `${countLabel} ${subjectLabel} on <b>${dateLabel}</b> (${priced} priced). Location resolved to: ${locationDisplay}`
         : `No movies fit that window on <b>${dateLabel}</b>. Location resolved to: ${locationDisplay}`;
+      applySearchDoneChip();
     } else {
       renderFilmHero(data, allResults.length
         ? `${countLabel} on <b>${dateLabel}</b> (${priced} priced) in ${locationDisplay}`
@@ -2791,6 +2855,9 @@
     if (priceVenue && imax70Pricing.has(priceVenue)) return;   // already pricing this one
     if (priceVenue) imax70Pricing.add(priceVenue);
     else if (venues || maxMiles === 'all') imax70Checking = true;
+    // Follow-ups are timed too: "pricing that venue took 32s" is exactly the
+    // thing worth knowing here, and the bar reports the most recent operation.
+    const timing = createTiming(els.imax70Timing);
     // A follow-up asks about SOME venues; the response marks every other venue
     // notRequested. Replacing the view with that would throw away everything
     // already on screen to price a single row, so follow-ups merge instead --
@@ -2852,6 +2919,7 @@
     } finally {
       if (priceVenue) imax70Pricing.delete(priceVenue);
       else if (venues || maxMiles === 'all') imax70Checking = false;
+      timing.finish();
       els.searchBtn.disabled = false;
     }
   }
