@@ -51,7 +51,7 @@ const { getMarcusCinemasInRange, getMarcusShowtimesForCinemas, getMarcusSessionP
 const { getLandmarkTheatersInRange, getLandmarkShowtimesForTheaters, getLandmarkPricing } = require("./lib/priceAdapters/landmark-official");
 const { matchesMovie } = require("./lib/priceAdapters/serpapi");
 const CINEMARK_THEATER_SLUGS = require("./lib/cinemark-theater-slugs");
-const { getRuntimeForMovieAtTheater, getCinemarkMovieIdForTitle } = require("./lib/cinemark-runtime-scraper");
+const { getRuntimeForMovieAtTheater, getCinemarkMovieIdForTitle, getCinemarkMovieIdsForTitle } = require("./lib/cinemark-runtime-scraper");
 const { geocodeForward } = require("./lib/geocode");
 const { getRuntimeMinutes, getRuntimeInfo } = require("./lib/movie-runtime");
 const { getRatings: getMovieRatings, isConfigured: isRatingsConfigured } = require("./lib/movie-ratings");
@@ -373,32 +373,66 @@ app.get("/api/imax-70mm", async (req, res) => {
         // Cinemark's showtimes endpoint is MOVIE-scoped -- it cannot be asked
         // "what is on at this theater" -- which is why these showings came
         // from Atom in the first place. So pricing means resolving a
-        // cinemarkMovieId (static map first, then live off the theater's own
-        // page, same two-step the main search uses), pulling Cinemark's real
-        // showtimes for that movie at this one theater, and matching them
-        // back to the Atom-sourced showings by start time.
+        // cinemarkMovieId, pulling Cinemark's real showtimes for that movie at
+        // this one theater, and matching them back to the Atom-sourced
+        // showings by start time.
+        //
+        // The catch, confirmed at Carefree Circle: Cinemark lists a film's
+        // FORMATS as separate movie entries, and both cinemark-movie-map.js
+        // and getCinemarkMovieIdForTitle hold exactly one id per title -- the
+        // standard run. Asking with that id returned the standard screen's
+        // times (10:40/14:30/18:20/22:10, 3h50 apart) while the 70mm screen
+        // ran 11:40/15:20/19:00/22:40 (3h40 apart), so nothing ever matched.
+        // Try every id the theater page carries for this title and keep the
+        // one whose showtimes actually line up with the times being priced --
+        // a stronger test than guessing at Cinemark's format wording.
         const movieName = target.showings[0].movieName;
+        const atHHMM = (iso) => {
+          const m = /T(\d{2}):(\d{2})/.exec(String(iso || ""));
+          return m ? `${m[1]}:${m[2]}` : null;
+        };
         try {
           const cinemarkTheaters = require("./lib/cinemark-theaters");
           const slug = (cinemarkTheaters.find((t) => String(t.id) === String(target.chainCode)) || {}).slug || null;
-          let cinemarkMovieId = CINEMARK_MOVIE_MAP[movieName] || null;
-          if (!cinemarkMovieId && slug) {
-            cinemarkMovieId = await getCinemarkMovieIdForTitle(slug, movieName).catch(() => null);
+          const candidates = [];
+          if (slug) {
+            const live = await getCinemarkMovieIdsForTitle(slug, movieName).catch(() => []);
+            candidates.push(...live);
           }
-          if (!cinemarkMovieId) {
+          // The static map last: it is the standard version, so it is the
+          // fallback rather than the first thing tried.
+          const mapped = CINEMARK_MOVIE_MAP[movieName];
+          if (mapped && !candidates.includes(mapped)) candidates.push(mapped);
+          if (!candidates.length) {
             throw new Error(
               `couldn't resolve a cinemarkMovieId for "${movieName}" -- not in lib/cinemark-movie-map.js, and the live lookup ${slug ? `found nothing on ${slug}` : `had no slug for theater ${target.chainCode} in lib/cinemark-theaters.js`}`
             );
           }
-          const showtimes = await getCinemarkShowtimesForMovie({
-            cinemarkMovieId,
-            dateISO,
-            theaterIdsCsv: String(target.chainCode),
-          });
-          const atHHMM = (iso) => {
-            const m = /T(\d{2}):(\d{2})/.exec(String(iso || ""));
-            return m ? `${m[1]}:${m[2]}` : null;
-          };
+          const wantedTimes = new Set(target.showings.map((x) => x.time));
+          let showtimes = [];
+          let cinemarkMovieId = null;
+          const tried = [];
+          for (const id of candidates) {
+            const rows = await getCinemarkShowtimesForMovie({
+              cinemarkMovieId: id,
+              dateISO,
+              theaterIdsCsv: String(target.chainCode),
+            }).catch(() => []);
+            tried.push(`${id} -> ${rows.length ? rows.map((x) => `${atHHMM(x.showtimeISO)} ${x.format || "?"}`).join(", ") : "no showtimes"}`);
+            if (rows.some((x) => wantedTimes.has(atHHMM(x.showtimeISO)))) {
+              showtimes = rows;
+              cinemarkMovieId = id;
+              break;
+            }
+            // Keep something non-empty so a total miss can still report what
+            // Cinemark did offer.
+            if (!showtimes.length) showtimes = rows;
+          }
+          console.error(
+            `IMAX 70mm: Cinemark ${target.name} -- ${candidates.length} movie id(s) for "${movieName}"; ` +
+            (cinemarkMovieId ? `matched on ${cinemarkMovieId}. ` : `none matched. `) +
+            tried.join(" | ")
+          );
           // Priced per showing, each failing on its own -- one bad showtime
           // shouldn't blank out the ones that did price.
           let firstErr = null;
@@ -437,9 +471,7 @@ app.get("/api/imax-70mm", async (req, res) => {
           console.error(
             `IMAX 70mm: priced ${target.name} -- ${pricedCount}/${target.showings.length} showings, 0 credit(s).` +
             (pricedCount ? "" :
-              ` Cinemark listed ${showtimes.length} showtime(s) [${showtimes.map((x) => `${atHHMM(x.showtimeISO)} ${x.format || "?"}`).join(", ")}]` +
-              ` for cinemarkMovieId ${cinemarkMovieId}, against Atom's 70mm times [${target.showings.map((x) => x.time).join(", ")}].` +
-              ` If none of those formats is IMAX, this movie id is the standard version of the film and the 70mm screen is a separate Cinemark entry.`)
+              ` No Cinemark showtime matched Atom's 70mm times [${target.showings.map((x) => x.time).join(", ")}] across ${candidates.length} movie id(s).`)
           );
           // A silent 0/N is the one outcome that tells nobody anything, so
           // say WHICH of the three reasons it was.
@@ -449,8 +481,8 @@ app.get("/api/imax-70mm", async (req, res) => {
               throw new Error(`Cinemark's own listing has no showtimes for "${movieName}" at this theater on ${dateISO}`);
             }
             throw new Error(
-              `Cinemark lists ${showtimes.length} showtime(s) for "${movieName}" here, but none start at the same time as Atom's 70mm showings ` +
-              `(Cinemark: ${showtimes.map((x) => `${atHHMM(x.showtimeISO)} ${x.format || "?"}`).join(", ")}; Atom: ${target.showings.map((x) => x.time).join(", ")})`
+              `Cinemark has no showtimes matching these 70mm times for "${movieName}" here, across ${candidates.length} movie id(s) ` +
+              `[${tried.join(" | ")}]; Atom: ${target.showings.map((x) => x.time).join(", ")}`
             );
           }
         } catch (err) {

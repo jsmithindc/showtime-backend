@@ -401,7 +401,21 @@ a Cinemark venue resolves a `cinemarkMovieId` first (static
 Cinemark's real showtimes for that movie at that one theater, and matches them
 back to the Atom-sourced showings **by start time**. A showing Atom knows about
 that Cinemark's own listing doesn't carry at the same HH:MM simply goes
-unpriced. Unlike Regal, the fee is real per-showing data, so these are marked
+unpriced.
+
+**Cinemark lists a film's FORMATS as separate movie entries**, which is why
+that matching originally found nothing. Both `lib/cinemark-movie-map.js` and
+`getCinemarkMovieIdForTitle()` hold exactly one id per title -- the standard
+run -- so asking with it returns the standard screen and never the 70mm one.
+Confirmed at Carefree Circle: id 108919 gave 10:40/14:30/18:20/22:10 (3h50
+apart) while the 70mm screen ran 11:40/15:20/19:00/22:40 (3h40 apart), and
+Atom's 70mm times matched Cinemark's own theater page exactly. The different
+SPACING is what rules out a timezone or previews offset; both sides pass the
+same `dateISO` (Atom is fetched with `?date=`), which rules out a date
+mismatch. `getCinemarkMovieIdsForTitle()` now returns every id near any
+occurrence of the title and the caller tries each, keeping the one whose
+showtimes line up with the times being priced -- a stronger test than guessing
+at Cinemark's format wording, which is not consistent. Unlike Regal, the fee is real per-showing data, so these are marked
 `feeStatus: "confirmed"`, and the Atom theater-page `buyUrl` is upgraded to a
 direct Cinemark ticket link once priced. Each showing prices independently --
 one failure can't blank out the ones that worked.
