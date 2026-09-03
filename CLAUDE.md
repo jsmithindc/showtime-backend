@@ -539,6 +539,22 @@ the point, and a matching ZIP is strong confirmation.
           | grep -oE "[A-Z][A-Z0-9_]{3,}=[\"']?[A-Za-z0-9_-]{20,}" \
           | cut -d= -f1 | sort -u
       done
+- **Cinemark pricing can be IP-blocked, and pacing does NOT fix that.**
+  Observed 2026-09-03 from Render: a dense LA search (7 Cinemark theaters)
+  first failed 4 of 18 showtimes with HTTP 429 -- a real rate limit, 14 still
+  priced. Serializing requests at 300ms (`CINEMARK_PRICING_GAP_MS`) made it
+  WORSE, not better: the failure moved to a Cloudflare challenge served as
+  **HTTP 200** on the FIRST request of the search, and all ~20 failed. That is
+  an IP-reputation verdict on cinemark.com, not a verdict on request rate, so
+  spacing cannot clear it -- it only spreads guaranteed failures over a longer
+  window. `getTicketPricing()` now trips a breaker on the first challenge and
+  skips the rest for `CINEMARK_CHALLENGE_COOLDOWN_MS` (120s), turning twenty
+  certain failures into one. The pacing is kept because it plausibly avoids
+  re-tripping the original 429, but it is unproven and is NOT the fix. A real
+  fix means not using Render's IP -- routing Cinemark through Camofox (which
+  would need a tab parked on cinemark.com, since `camofox-regal` declares
+  regmovies.com only) or a residential proxy. Note the learned price model
+  already covers the gap with estimates where a Cinemark bucket exists.
 - **Regal ticket types do not always fill `LongDescription`.** Colorado Center
   9's IMAX 70mm ticket arrives as `{Description: "General Admission",
   LongDescription: "", PriceInCents: 3199}` -- so a matcher reading only

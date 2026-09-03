@@ -2267,21 +2267,28 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                   });
                   if (built) addResult(built);
                 } catch (err) {
-                  // err.stack, not just err.message: every Cinemark showtime
-                  // started failing with a bare "Maximum call stack size
-                  // exceeded", which names no function and so says nothing
-                  // about where it happens. It can't be reproduced from this
-                  // project's sandbox (cinemark.com serves it a bot-check page
-                  // instead of the real one), so the only way to locate it is
-                  // to capture frames from a real production failure. Trim to
-                  // the top frames -- a stack-overflow trace is thousands of
-                  // identical lines and the repeating frame is the answer.
-                  const frames = (err.stack || "").split("\n").slice(0, 6).join(" | ");
-                  console.error(
-                    `Cinemark pricing failed for ${theaterName} showtime ${match.showtimeId}:`,
-                    err.message,
-                    `-- top frames: ${frames}`
-                  );
+                  // A known rate limit needs no stack -- the cause is already
+                  // named, and twenty of these turned a search's log into
+                  // mostly Cloudflare frames.
+                  if (err.cinemarkRateLimited) {
+                    console.error(`Cinemark pricing skipped for ${theaterName} showtime ${match.showtimeId}: ${err.message}`);
+                  } else {
+                    // err.stack, not just err.message: every Cinemark showtime
+                    // started failing with a bare "Maximum call stack size
+                    // exceeded", which names no function and so says nothing
+                    // about where it happens. It can't be reproduced from this
+                    // project's sandbox (cinemark.com serves it a bot-check page
+                    // instead of the real one), so the only way to locate it is
+                    // to capture frames from a real production failure. Trim to
+                    // the top frames -- a stack-overflow trace is thousands of
+                    // identical lines and the repeating frame is the answer.
+                    const frames = (err.stack || "").split("\n").slice(0, 6).join(" | ");
+                    console.error(
+                      `Cinemark pricing failed for ${theaterName} showtime ${match.showtimeId}:`,
+                      err.message,
+                      `-- top frames: ${frames}`
+                    );
+                  }
                 }
               })
             )
