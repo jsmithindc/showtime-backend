@@ -894,7 +894,7 @@
     els.dateRadiusFields.style.display = isImax ? 'none' : '';
     if (els.formatSection) els.formatSection.style.display = isImax ? 'none' : '';
     if (els.chainSection) els.chainSection.style.display = isImax ? 'none' : '';
-    els.searchBtn.textContent = isImax ? 'Find 70mm IMAX' : isWindow ? 'Find what fits' : 'Find showtimes';
+    els.searchBtn.textContent = isImax ? 'Find IMAX 70mm' : isWindow ? 'Find what fits' : 'Find showtimes';
 
     // The IMAX tab owns its own output area; the shared result machinery is
     // for the two search modes.
@@ -2708,7 +2708,7 @@
   let imax70Origin = null;   // remembered so follow-up lookups don't re-geocode
   async function loadImax70(opts) {
     const { maxMiles, venues, priceVenue, listOnly } = (typeof opts === 'string' ? { maxMiles: opts } : (opts || {}));
-    els.imax70Body.innerHTML = '<div style="font-size:12px; color:var(--ink-dim);">Looking up 70mm IMAX venues&hellip;</div>';
+    els.imax70Body.innerHTML = '<div style="font-size:12px; color:var(--ink-dim);">Looking up IMAX 70mm venues&hellip;</div>';
     els.searchBtn.disabled = true;
     try {
       let lat = els.lat.value, lng = els.lng.value;
@@ -2804,10 +2804,10 @@
       .slice(0, 6);
     els.imax70Body.innerHTML =
       (playing.length
-        ? `<div class="status-line"><b>${playing.length}</b> venue${playing.length === 1 ? '' : 's'} with a 70mm IMAX showing today, nearest first.</div>` + playing.map(row).join('')
-        : `<div class="status-line">No 70mm IMAX showings found today at the ${checked} venue${checked === 1 ? '' : 's'} we can check.</div>`) +
+        ? `<div class="status-line"><b>${playing.length}</b> venue${playing.length === 1 ? '' : 's'} with an IMAX 70mm showing today, nearest first.</div>` + playing.map(row).join('')
+        : `<div class="status-line">No IMAX 70mm showings found today at the ${checked} venue${checked === 1 ? '' : 's'} we can check.</div>`) +
       (rest.length
-        ? `<div class="status-line" style="margin-top:14px;">Checked, nothing on 70mm today:</div>` + rest.map(row).join('')
+        ? `<div class="status-line" style="margin-top:14px;">Checked, nothing on IMAX 70mm today:</div>` + rest.map(row).join('')
         : '') +
       (failed.length
         ? `<div class="status-line" style="margin-top:14px;">Couldn't check ${failed.length} venue${failed.length === 1 ? '' : 's'}` +
