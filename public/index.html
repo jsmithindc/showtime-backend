@@ -2742,8 +2742,18 @@
   // drive further than for an ordinary showing.
   let imax70Origin = null;   // remembered so follow-up lookups don't re-geocode
   let imax70Data = null;     // last full response, so follow-ups can merge into it
+  // In-flight work, tracked as STATE rather than on the button element. Any
+  // request finishing re-renders the whole list, which rebuilds every button
+  // in its default enabled state -- so a button marked busy at click time came
+  // back clickable as soon as some OTHER request returned, and a second click
+  // fired a duplicate lookup while the first was still running.
+  const imax70Pricing = new Set();   // venue names currently being priced
+  let imax70Checking = false;        // a check-selected / check-all in flight
   async function loadImax70(opts) {
     const { maxMiles, venues, priceVenue, listOnly } = (typeof opts === 'string' ? { maxMiles: opts } : (opts || {}));
+    if (priceVenue && imax70Pricing.has(priceVenue)) return;   // already pricing this one
+    if (priceVenue) imax70Pricing.add(priceVenue);
+    else if (venues || maxMiles === 'all') imax70Checking = true;
     // A follow-up asks about SOME venues; the response marks every other venue
     // notRequested. Replacing the view with that would throw away everything
     // already on screen to price a single row, so follow-ups merge instead --
@@ -2794,10 +2804,17 @@
       } else {
         imax70Data = data;
       }
+      // Cleared before the render, so the button this call owns comes back
+      // enabled rather than stuck on "Pricing...". The finally covers the
+      // error path, which renders its own banner.
+      if (priceVenue) imax70Pricing.delete(priceVenue);
+      else if (venues || maxMiles === 'all') imax70Checking = false;
       renderImax70(imax70Data);
     } catch (err) {
       els.imax70Body.innerHTML = `<div class="banner error">Couldn't look that up: ${escapeHtml(err.message)}</div>`;
     } finally {
+      if (priceVenue) imax70Pricing.delete(priceVenue);
+      else if (venues || maxMiles === 'all') imax70Checking = false;
       els.searchBtn.disabled = false;
     }
   }
@@ -2846,11 +2863,11 @@
             ${times ? `<div class="imax70-row-times">${times}</div>` : ''}
             ${v.seating ? `<div class="imax70-row-seats" title="${escapeHtml(v.seating.note || '')}">sit in row ${escapeHtml(v.seating.best)}</div>` : ''}
             ${(v.showings && v.showings.length && v.showings.every((sh) => sh.price == null) && (v.chain === 'regal' || v.chain === 'cinemark'))
-              ? `<button class="locate-btn imax70-price-btn" data-venue="${escapeHtml(v.name)}" style="margin-top:5px; font-size:11px;">` +
+              ? `<button class="locate-btn imax70-price-btn" data-venue="${escapeHtml(v.name)}"${imax70Pricing.has(v.name) ? ' disabled' : ''} style="margin-top:5px; font-size:11px;">` +
                 // Relabelled after a failure. The button legitimately comes back
                 // -- pricing is retryable -- but an unchanged label made a failed
                 // attempt look like a click that did nothing.
-                `${v.priceError ? 'Try pricing again' : 'Price these showings'}</button>`
+                `${imax70Pricing.has(v.name) ? 'Pricing\u2026' : (v.priceError ? 'Try pricing again' : 'Price these showings')}</button>`
               : ''}
             ${v.priceError
               ? `<div class="imax70-row-times" style="color:var(--error);">Couldn't price these: ${escapeHtml(
@@ -2862,7 +2879,9 @@
                       ? "Cinemark doesn't list this film at that theater"
                       : /rawBoxProducts|bot-detection|TicketSeatMap/i.test(v.priceError)
                         ? "Cinemark's pricing page is unreachable right now"
-                        : v.priceError
+                        : /none start at the same time/i.test(v.priceError)
+                          ? "Cinemark's listing doesn't carry these showtimes"
+                          : v.priceError
                 )}</div>`
               : ''}
           </div>
@@ -2920,8 +2939,8 @@
               </div>
             </div>`).join('') +
           `<div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">` +
-            `<button class="locate-btn" id="imax70CheckPicked" type="button">Check selected</button>` +
-            `<button class="locate-btn" id="imax70CheckAll" type="button">Check all ${notLookedUp.length}</button>` +
+            `<button class="locate-btn" id="imax70CheckPicked" type="button"${imax70Checking ? ' disabled' : ''}>${imax70Checking ? 'Checking\u2026' : 'Check selected'}</button>` +
+            `<button class="locate-btn" id="imax70CheckAll" type="button"${imax70Checking ? ' disabled' : ''}>${imax70Checking ? 'Checking\u2026' : `Check all ${notLookedUp.length}`}</button>` +
           `</div>`
         : '') +
       `<div class="imax70-foot">True 15/70 film projection &mdash; not the digital IMAX in the format filter.</div>`;

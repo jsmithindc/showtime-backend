@@ -434,8 +434,24 @@ app.get("/api/imax-70mm", async (req, res) => {
           const pricedCount = target.showings.filter((x) => x.price != null).length;
           target.pricedNow = true;
           // Cinemark is a direct fetch -- no proxy provider, so no credits.
-          console.error(`IMAX 70mm: priced ${target.name} -- ${pricedCount}/${target.showings.length} showings, 0 credit(s).`);
-          if (!pricedCount && firstErr) throw firstErr;
+          console.error(
+            `IMAX 70mm: priced ${target.name} -- ${pricedCount}/${target.showings.length} showings, 0 credit(s).` +
+            (pricedCount ? "" :
+              ` Cinemark listed ${showtimes.length} showtime(s) [${showtimes.map((x) => atHHMM(x.showtimeISO)).join(", ")}]` +
+              ` against Atom's 70mm times [${target.showings.map((x) => x.time).join(", ")}].`)
+          );
+          // A silent 0/N is the one outcome that tells nobody anything, so
+          // say WHICH of the three reasons it was.
+          if (!pricedCount) {
+            if (firstErr) throw firstErr;
+            if (!showtimes.length) {
+              throw new Error(`Cinemark's own listing has no showtimes for "${movieName}" at this theater on ${dateISO}`);
+            }
+            throw new Error(
+              `Cinemark lists ${showtimes.length} showtime(s) for "${movieName}" here, but none start at the same time as Atom's 70mm showings ` +
+              `(Cinemark: ${showtimes.map((x) => atHHMM(x.showtimeISO)).join(", ")}; Atom: ${target.showings.map((x) => x.time).join(", ")})`
+            );
+          }
         } catch (err) {
           target.priceError = err.message;
           console.error(`IMAX 70mm: pricing ${priceVenue} failed:`, err.message);
