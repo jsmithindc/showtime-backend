@@ -535,11 +535,13 @@
   .imax70-buy:hover { color: var(--gold); }
   .imax70-foot { margin-top: 8px; font-size: 10px; color: var(--ink-dim); opacity: .75; }
   #imax70Intro {
-    margin: 2px 0 16px;
+    margin: 2px auto 16px;
     max-width: 68ch;
     font-size: 12.5px;
     line-height: 1.6;
     color: var(--ink-dim);
+    font-style: italic;
+    text-align: center;
   }
   .imax70-seats { margin-top: 5px; font-size: 11px; color: var(--ink-dim); opacity: .95; }
   .imax70-seats b { color: var(--gold); }
@@ -1221,12 +1223,10 @@
     const countEl = els.statusLine.querySelector('.film-hero-count');
     if (countEl && shell === lastHeroShell) {
       countEl.innerHTML = countLine;
-      applySearchDoneChip();
       return;
     }
     lastHeroShell = shell;
     els.statusLine.innerHTML = filmHeroHtml(data, { countLine });
-    applySearchDoneChip();
   }
 
   function ratingsHtml(r) {
@@ -1918,7 +1918,12 @@
   // re-apply it after a render whenever its window is still open.
   function applySearchDoneChip() {
     if (!searchDoneAt || Date.now() - searchDoneAt > SEARCH_DONE_MS - SEARCH_DONE_FADE_MS) return;
-    const host = document.querySelector('.film-hero-count') || els.statusLine;
+    // #banners, because that is where "More results still coming in..." lives.
+    // The pill used to go in the film hero's count line -- ABOVE the stinger
+    // panel -- while the note it replaces sits BELOW it, so finishing a search
+    // made the status jump across the panel. Same container, so one simply
+    // becomes the other.
+    const host = els.banners || els.statusLine;
     if (!host || host.querySelector('.search-done')) return;
     const chip = document.createElement('span');
     chip.className = 'search-done';
@@ -2332,6 +2337,7 @@
       banners.push(`<div class="banner" style="margin-top:8px; font-size:12px; color:#8a8478;">More results still coming in...</div>`);
     }
     els.banners.innerHTML = banners.join('');
+    applySearchDoneChip();   // banners are rebuilt every render; put the pill back
 
     const allResults = data.results || [];
     const allFormats = [...new Set(allResults.map((r) => r.format).filter(Boolean))];
@@ -2421,7 +2427,6 @@
       els.statusLine.innerHTML = allResults.length
         ? `${countLabel} ${subjectLabel} on <b>${dateLabel}</b> (${priced} priced). Location resolved to: ${locationDisplay}`
         : `No movies fit that window on <b>${dateLabel}</b>. Location resolved to: ${locationDisplay}`;
-      applySearchDoneChip();
     } else {
       renderFilmHero(data, allResults.length
         ? `${countLabel} on <b>${dateLabel}</b> (${priced} priced) in ${locationDisplay}`
