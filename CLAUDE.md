@@ -80,14 +80,33 @@ while the same search with Regal off finished in 1.5s. Only GETs are pooled --
 on POST volume. Set `CAMOFOX_TAB_POOL=1` to restore the old single-tab
 behaviour.
 
-**The Camofox host runs with `BROWSER_IDLE_TIMEOUT_MS=0` (never kill the
-browser).** Its default is 300000 -- five idle minutes -- after which the
-browser is killed and cold-started on the next request. That cold start takes
-~52s while the server's own `HANDLER_TIMEOUT_MS` is 30s, so the first Regal
-action after any quiet spell was guaranteed to fail. Set as a systemd override
-(`systemctl edit camofox.service` -> `Environment=BROWSER_IDLE_TIMEOUT_MS=0`);
-fall back to `3600000` (1 hour) if a permanently-resident Firefox strains that
-box, which it has before (1.9G peak).
+**The Camofox host runs with `BROWSER_IDLE_TIMEOUT_MS=3600000` (one hour).**
+Its default is 300000 -- five idle minutes -- after which the browser is killed
+and cold-started on the next request. That cold start takes ~52s while the
+server's own `HANDLER_TIMEOUT_MS` is 30s, so the first Regal action after any
+quiet spell was guaranteed to fail. Set as a systemd override (`systemctl edit
+camofox.service` -> `Environment=BROWSER_IDLE_TIMEOUT_MS=3600000`).
+
+**`0` does NOT mean "never" -- it means "kill it immediately", and it is much
+worse than the default.** Tried on 2026-09-02 and reverted the same evening.
+The host's own log is unambiguous: `browser pre-warmed  ms:25733` at
+04:13:18.818, then `browser idle shutdown (no sessions)` at 04:13:18.819 --
+one millisecond later. Worse, the sweeper fires *during* a tab create, because
+the session count is still 0 while `newContext` is in flight: `camoufox
+launched` -> `restoring persisted storage state` -> `browser idle shutdown` ->
+`killing browser survivor processes` -> `tab create failed: browser.newContext:
+Target page, context or browser has been closed`. That is the whole 500-then-
+503 pattern -- 500 is `tab create timed out after 30000ms` waiting on a cold
+launch that keeps getting shot, 503 is the launch cancelled outright. Every
+request paid a full cold start because nothing was ever allowed to stay warm.
+An hour is the right lever; a bigger number is fine, zero is not.
+
+Note the box is memory-tight (1.9G resident peak, 1.9G swap peak), so an hour
+of resident Firefox is a real commitment -- do not also raise
+`CAMOFOX_TAB_POOL` while judging whether it holds. Unrelated warnings in that
+log that are NOT causes: `xvfb not available` and the `glxtest` spawn failure.
+The headless fallback launches fine; those lines appear on every successful
+launch too.
 
 **Do NOT raise `HANDLER_TIMEOUT_MS` above 35000.** It is env-configurable and
 tempting, but `server.js` hardcodes `TAB_LOCK_TIMEOUT_MS = 35000` with the
