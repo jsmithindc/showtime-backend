@@ -388,8 +388,31 @@ The panel lists far venues for free with checkboxes, then `venues=<names>`
 looks up only the ones picked (at any distance -- an explicit pick overrides
 the distance gate), and `priceVenue=<name>` runs real pricing for one venue.
 AMC's prices and purchase links arrive free with its showtimes; Regal's price
-is behind createOrder so it is only fetched on request, which is why the
-"Price these showings" button appears on Regal rows and not AMC ones.
+is behind createOrder and Cinemark's behind a TicketSeatMap page fetch, so both
+are only fetched on request -- which is why the "Price these showings" button
+appears on Regal and Cinemark rows and not AMC ones.
+
+**Cinemark pricing in this panel takes an extra step, because its showtimes
+endpoint is MOVIE-scoped.** It cannot be asked "what is on at this theater",
+which is why these showings come from Atom to begin with -- so `priceVenue` on
+a Cinemark venue resolves a `cinemarkMovieId` first (static
+`lib/cinemark-movie-map.js`, then a live lookup off the theater's own page via
+`getCinemarkMovieIdForTitle`, the same two-step the main search uses), pulls
+Cinemark's real showtimes for that movie at that one theater, and matches them
+back to the Atom-sourced showings **by start time**. A showing Atom knows about
+that Cinemark's own listing doesn't carry at the same HH:MM simply goes
+unpriced. Unlike Regal, the fee is real per-showing data, so these are marked
+`feeStatus: "confirmed"`, and the Atom theater-page `buyUrl` is upgraded to a
+direct Cinemark ticket link once priced. Each showing prices independently --
+one failure can't blank out the ones that worked.
+
+Caveat carried over from the adapter itself: **cinemark.com is not reachable
+from this project's sandbox** (robots.txt + no egress), so this path is
+verified structurally and against the frontend, not end-to-end. Expect
+first-real-run adjustment, and note the two failure modes the UI already names
+separately -- an unresolvable `cinemarkMovieId` (the film isn't listed at that
+theater) versus a `rawBoxProducts`/bot-check miss (the pricing page itself
+didn't come back).
 
 **Only venues within `maxMiles` (default 200) are queried for showtimes.**
 Everything else is still listed with its distance -- just not looked up, since

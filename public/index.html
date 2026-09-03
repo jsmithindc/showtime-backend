@@ -2845,7 +2845,7 @@
             ${filmBlock}
             ${times ? `<div class="imax70-row-times">${times}</div>` : ''}
             ${v.seating ? `<div class="imax70-row-seats" title="${escapeHtml(v.seating.note || '')}">sit in row ${escapeHtml(v.seating.best)}</div>` : ''}
-            ${(v.showings && v.showings.length && v.showings.every((sh) => sh.price == null) && v.chain === 'regal')
+            ${(v.showings && v.showings.length && v.showings.every((sh) => sh.price == null) && (v.chain === 'regal' || v.chain === 'cinemark'))
               ? `<button class="locate-btn imax70-price-btn" data-venue="${escapeHtml(v.name)}" style="margin-top:5px; font-size:11px;">` +
                 // Relabelled after a failure. The button legitimately comes back
                 // -- pricing is retryable -- but an unchanged label made a failed
@@ -2858,7 +2858,11 @@
                   // Say the useful part; the detail stays in the tooltip.
                   /proxy providers failed|openTab|createOrder/i.test(v.priceError)
                     ? "Regal's pricing service is unreachable right now"
-                    : v.priceError
+                    : /cinemarkMovieId/i.test(v.priceError)
+                      ? "Cinemark doesn't list this film at that theater"
+                      : /rawBoxProducts|bot-detection|TicketSeatMap/i.test(v.priceError)
+                        ? "Cinemark's pricing page is unreachable right now"
+                        : v.priceError
                 )}</div>`
               : ''}
           </div>

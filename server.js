@@ -369,6 +369,77 @@ app.get("/api/imax-70mm", async (req, res) => {
           target.priceError = err.message;
           console.error(`IMAX 70mm: pricing ${priceVenue} failed:`, err.message);
         }
+      } else if (target && target.chain === "cinemark" && target.chainCode && target.showings && target.showings.length) {
+        // Cinemark's showtimes endpoint is MOVIE-scoped -- it cannot be asked
+        // "what is on at this theater" -- which is why these showings came
+        // from Atom in the first place. So pricing means resolving a
+        // cinemarkMovieId (static map first, then live off the theater's own
+        // page, same two-step the main search uses), pulling Cinemark's real
+        // showtimes for that movie at this one theater, and matching them
+        // back to the Atom-sourced showings by start time.
+        const movieName = target.showings[0].movieName;
+        try {
+          const cinemarkTheaters = require("./lib/cinemark-theaters");
+          const slug = (cinemarkTheaters.find((t) => String(t.id) === String(target.chainCode)) || {}).slug || null;
+          let cinemarkMovieId = CINEMARK_MOVIE_MAP[movieName] || null;
+          if (!cinemarkMovieId && slug) {
+            cinemarkMovieId = await getCinemarkMovieIdForTitle(slug, movieName).catch(() => null);
+          }
+          if (!cinemarkMovieId) {
+            throw new Error(
+              `couldn't resolve a cinemarkMovieId for "${movieName}" -- not in lib/cinemark-movie-map.js, and the live lookup ${slug ? `found nothing on ${slug}` : `had no slug for theater ${target.chainCode} in lib/cinemark-theaters.js`}`
+            );
+          }
+          const showtimes = await getCinemarkShowtimesForMovie({
+            cinemarkMovieId,
+            dateISO,
+            theaterIdsCsv: String(target.chainCode),
+          });
+          const atHHMM = (iso) => {
+            const m = /T(\d{2}):(\d{2})/.exec(String(iso || ""));
+            return m ? `${m[1]}:${m[2]}` : null;
+          };
+          // Priced per showing, each failing on its own -- one bad showtime
+          // shouldn't blank out the ones that did price.
+          let firstErr = null;
+          await Promise.all(target.showings.map(async (sh) => {
+            const match = showtimes.find((x) => atHHMM(x.showtimeISO) === sh.time);
+            if (!match) return;
+            try {
+              const priced = await getCinemarkTicketPricing({
+                theaterId: match.theaterId,
+                showtimeId: match.showtimeId,
+                cinemarkMovieId: match.cinemarkMovieId,
+                showtimeISO: match.showtimeISO,
+              });
+              if (priced.price == null) return;
+              sh.price = priced.price;
+              sh.priceBeforeFee = priced.priceBeforeFee;
+              // Cinemark ships the real per-showing fee, so this is confirmed
+              // rather than the estimate Regal needs.
+              sh.fee = priced.fee;
+              sh.feeStatus = "confirmed";
+              // A direct Cinemark link beats Atom's theater page, which is all
+              // an Atom-sourced showing carries.
+              sh.buyUrl = buildCinemarkTicketUrl({
+                theaterId: match.theaterId,
+                showtimeId: match.showtimeId,
+                cinemarkMovieId: match.cinemarkMovieId,
+                showtimeISO: match.showtimeISO,
+              }) || sh.buyUrl;
+            } catch (err) {
+              if (!firstErr) firstErr = err;
+            }
+          }));
+          const pricedCount = target.showings.filter((x) => x.price != null).length;
+          target.pricedNow = true;
+          // Cinemark is a direct fetch -- no proxy provider, so no credits.
+          console.error(`IMAX 70mm: priced ${target.name} -- ${pricedCount}/${target.showings.length} showings, 0 credit(s).`);
+          if (!pricedCount && firstErr) throw firstErr;
+        } catch (err) {
+          target.priceError = err.message;
+          console.error(`IMAX 70mm: pricing ${priceVenue} failed:`, err.message);
+        }
       }
     }
 
