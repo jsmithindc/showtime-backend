@@ -2750,7 +2750,18 @@
         // back notRequested carries no new information and must not clobber
         // what we already know about it.
         const fresh = new Map((data.venues || []).filter((v) => v.checked || v.error).map((v) => [v.name, v]));
-        imax70Data.venues = imax70Data.venues.map((v) => (fresh.has(v.name) ? { ...v, ...fresh.get(v.name) } : v));
+        imax70Data.venues = imax70Data.venues.map((v) => {
+          const f = fresh.get(v.name);
+          if (!f) return v;
+          const merged = { ...v, ...f };
+          // A venue we just looked up is no longer "not looked up". These flags
+          // are ABSENT from the fresh object rather than false, so a spread
+          // leaves the old true in place -- which put the venue in the results
+          // list AND the not-checked list at the same time.
+          delete merged.tooFar;
+          delete merged.notRequested;
+          return merged;
+        });
         imax70Data.films = { ...(imax70Data.films || {}), ...(data.films || {}) };
       } else {
         imax70Data = data;
@@ -2835,7 +2846,11 @@
     const failed = venues.filter((v) => v.error && !(v.showings && v.showings.length));
     // Everything we deliberately didn't look up -- too far, or not among the
     // venues the user picked. Listed for free, with a way to opt in.
-    const notLookedUp = venues.filter((v) => v.tooFar || v.notRequested);
+    // Belt and braces: whatever the flags say, a venue that was checked or has
+    // showings has plainly been looked up and cannot belong in this list.
+    const notLookedUp = venues.filter(
+      (v) => (v.tooFar || v.notRequested) && !v.checked && !(v.showings && v.showings.length)
+    );
     const rest = venues
       .filter((v) => !(v.showings && v.showings.length) && !v.error && !v.tooFar)
       .slice(0, 6);
