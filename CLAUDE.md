@@ -108,6 +108,49 @@ log that are NOT causes: `xvfb not available` and the `glxtest` spawn failure.
 The headless fallback launches fine; those lines appear on every successful
 launch too.
 
+**Before tuning anything on the Camofox host, check the Proxmox host's I/O
+pressure.** Camofox's failure mode under host I/O starvation is indistinguishable
+from a Camofox misconfiguration: a Firefox cold start that normally takes ~25s
+stretches past the launcher's own 60s timeout, the launch is abandoned but NOT
+cancelled (it completes ~119s later), a retry starts 5s after that, and the two
+browsers then compete -- so the request-facing symptom is a stream of 500
+(`tab create timed out after 30000ms`) and 503 (`Browser launch timeout (60s)`)
+that looks exactly like the tab-create problems documented above.
+
+Diagnosed 2026-09-02, from inside the Camofox container:
+
+    cat /proc/pressure/io      # some avg300=99.14, full avg60=53.56
+    cat /proc/pressure/cpu     # full avg60=0.00  <- NOT cpu-starved
+    ps -eo stat,pid,wchan:24,comm | awk '$1 ~ /^D/'
+
+D-state wait channels name the layer: `jbd2_log_wait_commit` is the ext4 journal
+unable to flush, and bash itself sat in `wait_on_buffer`. Note `/proc/loadavg`
+in these containers is NOT lxcfs-virtualized -- it reports the Proxmox host's
+numbers (the giveaway is a thread count like `14/1790` against 28 tasks in
+`top`), so a load average of 76 there says nothing about this container.
+
+The culprit was a DIFFERENT container: `byparr` (CT 115), another browser-based
+service, thrashing host I/O. Rebooting it dropped `io some` from 99% to 8% and
+Camofox recovered untouched. Neither the pool (`MediaMachine ONLINE, 0 errors`,
+no scrub) nor a backup job (no vzdump in `/var/log/pve/tasks/index`) was
+involved. byparr had OOMed only once in 7 days, so memory is not how it fails
+-- but it IS recurrent, needing a manual restart several times in the days
+around 2026-09-02. Treat a sudden Camofox slowdown as a prompt to check byparr
+first, not as a new Camofox bug. Stopping camofox and confirming pressure stayed at 99%
+with zero camoufox processes is what ruled Camofox out as the cause; do that
+first next time rather than tuning timeouts.
+
+byparr's failure mode is a **wedge, not a crash**: its journal shows three
+concurrent Prowlarr solves hitting `Challenge detected, waiting for it to
+clear...` and never logging `Done` (a healthy solve takes ~18s), after which it
+answered nothing for 31 minutes while its stuck Camoufox instances held the
+disk. Its unit is `Restart=on-failure`, which never fires for that -- the
+process stays "active" and simply stops responding. CT 115 now runs a
+`byparr-health.timer` probing `localhost:8191/` every 2 minutes and restarting
+after two consecutive misses, so it should self-recover in ~4 minutes.
+Consequence: an I/O storm lasting much longer than that is NOT byparr, and
+`journalctl -t byparr-health` inside CT 115 counts how often it wedges.
+
 **Do NOT raise `HANDLER_TIMEOUT_MS` above 35000.** It is env-configurable and
 tempting, but `server.js` hardcodes `TAB_LOCK_TIMEOUT_MS = 35000` with the
 comment "Must be > HANDLER_TIMEOUT_MS so active op times out first". Raising
