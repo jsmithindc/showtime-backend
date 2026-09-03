@@ -46,6 +46,9 @@ const CINEMARK_MOVIE_MAP = require("./lib/cinemark-movie-map");
 const CINEMAWEST_THEATER_MAP = require("./lib/cinemawest-theater-map");
 const { getShowtimesForSite: getCinemaWestShowtimes, getTicketPricing: getCinemaWestTicketPricing, getFreshTokenCached: getCinemaWestFreshToken } = require("./lib/priceAdapters/cinemawest-official");
 const { getHarkinsTheaters } = require("./lib/harkins-theaters");
+const { getShowtimesForCinema: getCelebrationShowtimes } = require("./lib/priceAdapters/celebration-official");
+const { getShowtimes: getAppleShowtimes, getTicketPricing: getAppleTicketPricing } = require("./lib/priceAdapters/applecinemas-official");
+const APPLECINEMAS_MOVIE_MAP = require("./lib/applecinemas-movie-map");
 const { getMovieCatalog: getHarkinsMovieCatalog, getShowtimesForMovie: getHarkinsShowtimesForMovie, getTicketPricing: getHarkinsTicketPricing, getRuntimeForMovie: getHarkinsRuntimeForMovie } = require("./lib/priceAdapters/harkins-official");
 const REGENCY_THEATER_MAP = require("./lib/regency-theater-map");
 const { getShowtimesForLocation: getRegencyShowtimesForLocation, getTicketPricing: getRegencyTicketPricing, getFilmIdMap: getRegencyFilmIdMap } = require("./lib/priceAdapters/regency-official");
@@ -314,6 +317,50 @@ app.get("/api/imax-70mm", async (req, res) => {
                            // is a different field from the harkinsId in chainCode.
                            sessionId: x.sessionId || null,
                            confirmed: false }));
+        } else if (v.chain === "celebration" && v.chainSlug && v.chainCode) {
+          // The chain's own page STATES IMAX70mm in SessionAttributesNames, so
+          // these are confirmed rather than inferred -- and it costs nothing,
+          // where Atom costs a Firecrawl credit per venue per day.
+          const sessions = await getCelebrationShowtimes({ slug: v.chainSlug, cinemaId: v.chainCode, dateISO });
+          v.checked = true;
+          v.showings = sessions
+            .filter((x) => !movie || matchesMovie(x.movieName, movie))
+            .filter((x) => !only70mm || x.imax70mm)
+            .map((x) => ({
+              time: x.time,
+              format: x.imax70mm ? "IMAX 70mm" : (x.attributes.join(", ") || null),
+              movieName: x.movieName,
+              imax70mm: x.imax70mm,
+              confirmed: x.imax70mm,   // stated by the chain, not inferred
+              price: null,
+              buyUrl: x.bookingUrl,
+              sessionId: x.sessionId,
+            }));
+        } else if (v.chain === "applecinemas" && v.chainCode && movie && APPLECINEMAS_MOVIE_MAP[movie]) {
+          // Guarded on a KNOWN movieId: their schedule endpoint is movie-scoped
+          // and no location-scoped listing exists, so without one there is
+          // nothing to ask for -- and the guard lets it fall through to Atom
+          // rather than reporting the venue as checked-with-nothing.
+          const st = await getAppleShowtimes({
+            locationId: v.chainCode,
+            movieId: APPLECINEMAS_MOVIE_MAP[movie],
+            dateISO,
+          });
+          v.checked = true;
+          v.showings = st
+            .filter((x) => !only70mm || x.imax70mm)
+            .map((x) => ({
+              time: x.time,
+              format: x.imax70mm ? "IMAX 70mm" : (x.screenInfo || []).join(", ") || null,
+              movieName: x.movieName,
+              imax70mm: x.imax70mm,
+              confirmed: x.imax70mm,   // screenInfo says "IMAX 70MM" outright
+              price: null,
+              soldOut: x.soldOut,
+              // Carried so priceVenue can price without re-fetching the schedule.
+              priceCardId: x.priceCardId,
+              buyUrl: `https://www.applecinemas.com/home/${v.chainCode}`,
+            }));
         } else if (v.atomSlug) {
           // Everything our own adapters can't answer for -- Cinemark, the
           // museums, the independents -- goes through Atom, which is the only
@@ -406,6 +453,47 @@ app.get("/api/imax-70mm", async (req, res) => {
           });
           target.pricedNow = true;
           console.error(`IMAX 70mm: priced ${target.name} -- ${target.showings.filter((x) => x.price != null).length}/${target.showings.length} showings, ${costTracker.total} credit(s).`);
+        } catch (err) {
+          target.priceError = err.message;
+          console.error(`IMAX 70mm: pricing ${priceVenue} failed:`, err.message);
+        }
+      } else if (target && target.chain === "applecinemas" && target.chainCode && target.showings && target.showings.length) {
+        try {
+          let firstErr = null;
+          await Promise.all(target.showings.map(async (sh) => {
+            if (!sh.priceCardId) return;
+            try {
+              const priced = await getAppleTicketPricing({
+                locationId: target.chainCode,
+                priceCardId: sh.priceCardId,
+                salesChannel: "Web",
+              });
+              if (priced.price == null) return;
+              sh.price = priced.price;
+              sh.priceBeforeFee = priced.priceBeforeFee;
+              // Apple states both charges outright, so this is their figure
+              // rather than an estimate -- see the fee note in the adapter.
+              sh.fee = priced.fee;
+              sh.feeStatus = "confirmed";
+              priceModel.record({
+                chain: "applecinemas",
+                theaterName: priceModelNameFor(target),
+                format: IMAX_70MM_BUCKET_FORMAT,
+                startTimeRaw: sh.time,
+                dateISO,
+                price: sh.price,
+              });
+            } catch (err) {
+              if (!firstErr) firstErr = err;
+            }
+          }));
+          const pricedCount = target.showings.filter((x) => x.price != null).length;
+          target.pricedNow = true;
+          console.error(`IMAX 70mm: priced ${target.name} -- ${pricedCount}/${target.showings.length} showings, 0 credit(s).`);
+          if (!pricedCount) {
+            if (firstErr) throw firstErr;
+            throw new Error("Apple Cinemas returned no price card for these showings");
+          }
         } catch (err) {
           target.priceError = err.message;
           console.error(`IMAX 70mm: pricing ${priceVenue} failed:`, err.message);
