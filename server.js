@@ -3284,34 +3284,70 @@ app.get("/api/popular-movies", async (req, res) => {
     if (fresh && fresh.length) return res.json({ movies: fresh });
   } catch { /* cache is best-effort; fall through to the live fetch */ }
 
-  try {
-    const txTheaters = await getAmcTheatersByState("TX");
-    const mesquite = txTheaters.find((t) => /mesquite\s+30/i.test(t.name))
-      || txTheaters.find((t) => /mesquite/i.test(t.name));
-    if (!mesquite) {
-      return res.status(503).json({ error: "AMC Mesquite 30 not found", movies: [] });
-    }
-    const showtimes = await getAmcShowtimesForTheater({ theatreId: mesquite.id, dateISO: todayISO });
-    // runTime rides along on every AMC showing, so the dropdown can show a
-    // real runtime per title without a single extra request -- this endpoint
-    // was already fetching exactly the data that carries it.
-    const seen = new Set();
-    const movies = [];
-    for (const s of showtimes) {
-      if (!s.movieName) continue;
-      const title = s.movieName.trim();
-      const key = title.toLowerCase();
-      if (!seen.has(key)) {
+  // TWO sources, tried in order. AMC was the only one, which made a single
+  // vendor key a hard dependency for the dropdown on every page load -- a 403
+  // emptied it outright. Harkins publishes a nationwide catalog with a
+  // nowShowing flag and needs NO credentials at all, so it covers precisely
+  // the case AMC can't.
+  const sources = [
+    {
+      name: "AMC Mesquite 30",
+      async load() {
+        const txTheaters = await getAmcTheatersByState("TX");
+        const mesquite = txTheaters.find((t) => /mesquite\s+30/i.test(t.name))
+          || txTheaters.find((t) => /mesquite/i.test(t.name));
+        if (!mesquite) throw new Error("AMC Mesquite 30 not found in the TX theater list");
+        const showtimes = await getAmcShowtimesForTheater({ theatreId: mesquite.id, dateISO: todayISO });
+        // runTime rides along on every AMC showing, so the dropdown can show a
+        // real runtime per title without a single extra request -- this
+        // endpoint was already fetching exactly the data that carries it.
+        return showtimes
+          .filter((s) => s.movieName)
+          .map((s) => ({ title: s.movieName.trim(), runtimeMinutes: s.runTime ?? null }));
+      },
+    },
+    {
+      name: "Harkins catalog",
+      async load() {
+        // nowShowing is the chain's own "in theaters now" flag -- the catalog
+        // is mostly comingSoon (153 of 206 on a real fetch), and listing films
+        // nobody can buy a ticket for would be worse than an empty dropdown.
+        const catalog = await getHarkinsMovieCatalog();
+        return (catalog || [])
+          .filter((m) => m && m.nowShowing && m.title)
+          .map((m) => ({ title: String(m.title).trim(), runtimeMinutes: m.runtime ?? null }));
+      },
+    },
+  ];
+
+  const failures = [];
+  for (const source of sources) {
+    try {
+      const raw = await source.load();
+      const seen = new Set();
+      const movies = [];
+      for (const m of raw) {
+        const key = m.title.toLowerCase();
+        if (seen.has(key)) continue;
         seen.add(key);
-        movies.push({ title, runtimeMinutes: s.runTime ?? null });
+        movies.push(m);
       }
+      if (!movies.length) throw new Error("returned no titles");
+      movies.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
+      writeCache(cacheKey, movies, STALE_TTL_MS);
+      console.error(
+        `Popular-movies: ${movies.length} title(s) from ${source.name}, cached for the day.` +
+        (failures.length ? ` (${failures.join("; ")})` : "")
+      );
+      return res.json({ movies });
+    } catch (err) {
+      failures.push(`${source.name} failed: ${err.message}`);
     }
-    movies.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
-    writeCache(cacheKey, movies, STALE_TTL_MS);
-    console.error(`Popular-movies: ${movies.length} title(s) from ${mesquite.name}, cached for the day.`);
-    res.json({ movies });
-  } catch (err) {
-    console.error("Popular-movies (AMC Mesquite 30) lookup failed:", err.message);
+  }
+
+  {
+    const err = new Error(failures.join(" | "));
+    console.error("Popular-movies: every source failed --", err.message);
     // Serve a stale list rather than nothing. This is the whole point of
     // caching here: an empty dropdown is indistinguishable from "no films
     // playing" to whoever is looking at it.
@@ -3319,7 +3355,7 @@ app.get("/api/popular-movies", async (req, res) => {
       const stale = await readCache(cacheKey, STALE_TTL_MS)
         || await readCache(`popular-movies-${new Date(Date.now() - 864e5).toISOString().slice(0, 10)}`, STALE_TTL_MS);
       if (stale && stale.length) {
-        console.error(`Popular-movies: serving ${stale.length} cached title(s) instead — AMC is unreachable.`);
+        console.error(`Popular-movies: serving ${stale.length} cached title(s) instead — every live source failed.`);
         return res.json({ movies: stale, stale: true });
       }
     } catch { /* fall through to the error below */ }
