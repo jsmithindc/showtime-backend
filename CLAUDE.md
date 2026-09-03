@@ -519,13 +519,26 @@ the point, and a matching ZIP is strong confirmation.
   claimed there was none and called adding one standing first-priority
   cleanup — that was stale, and it is worth checking `git check-ignore -v`
   rather than trusting either claim.
-  **The real exposure is historical, and a `.gitignore` cannot fix it:**
-  `start.sh` WAS committed (`c62f6b1`, `211da66`, `911c41d`) before
-  `d5ecec2` removed it, and at `911c41d` it carried `ZENROWS_API_KEY` and
-  `AMC_VENDOR_KEY` with real-looking values. Those blobs are still
-  reachable in history. If this repo is or ever was public, treat both keys
-  as disclosed and rotate them; rewriting history (filter-repo) only helps
-  if nobody has cloned or forked it.
+  **This repo is PUBLIC, and `start.sh` was committed to it.** `c62f6b1`,
+  `211da66`, `f8f2be3` and `911c41d` all carry it, before `d5ecec2` removed
+  it -- and `911c41d` held NINE credentials: `SERPAPI_KEY`,
+  `SCRAPEDO_TOKEN`, `ZENROWS_API_KEY`, `APIFY_API_TOKEN`,
+  `FIRECRAWL_API_KEY`, `BRIGHTDATA_API_KEY`, `BRIGHTDATA_ZONE`,
+  `AMC_VENDOR_KEY` and `APP_PASSWORD`. All nine were **rotated on
+  2026-09-03**, so the historical blobs are dead and no history rewrite is
+  needed. The lesson stands though: anything committed here is public
+  immediately and permanently, and a `.gitignore` cannot retract it.
+
+  Note the check that found this. An anchored pattern
+  (`^[[:space:]]*(export )?[A-Z_]+=`) reported only two credentials and was
+  wrong -- the file has assignments that aren't at line start. The
+  unanchored form is the one to use:
+
+      for c in $(git log --all --format=%h -- start.sh); do
+        git show $c:start.sh 2>/dev/null \
+          | grep -oE "[A-Z][A-Z0-9_]{3,}=[\"']?[A-Za-z0-9_-]{20,}" \
+          | cut -d= -f1 | sort -u
+      done
 - **Regal ticket types do not always fill `LongDescription`.** Colorado Center
   9's IMAX 70mm ticket arrives as `{Description: "General Admission",
   LongDescription: "", PriceInCents: 3199}` -- so a matcher reading only
