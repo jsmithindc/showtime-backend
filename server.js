@@ -334,6 +334,16 @@ app.get("/api/imax-70mm", async (req, res) => {
       }
     })));
 
+    // 70mm prices go into the learned model under their OWN format bucket, not
+    // folded into "IMAX at AMC" / "IMAX IMAX 70mm": a 15/70 ticket is priced
+    // differently from a digital IMAX one, so mixing them would make both
+    // estimates worse. theaterName uses the venue's chainName -- the chain's
+    // own name for the theater, which is what the main search records
+    // (theater.displayName || theater.name) -- so both feed the same buckets
+    // rather than two spellings of one theater.
+    const IMAX_70MM_BUCKET_FORMAT = "IMAX 70mm";
+    const priceModelNameFor = (v) => v.chainName || v.name;
+
     // Priced only on request, and only for the one venue asked about. Regal is
     // the case that matters: its price is behind createOrder, so pricing every
     // venue on every listing would spend the Cloudflare POST budget this app
@@ -362,6 +372,15 @@ app.get("/api/imax-70mm", async (req, res) => {
               sh.price = Math.round((p.price + fee) * 100) / 100;
               sh.estimatedFee = fee;
               sh.feeStatus = "estimated";
+              // A real price read from the chain, so it belongs in the model.
+              priceModel.record({
+                chain: "regal",
+                theaterName: priceModelNameFor(target),
+                format: IMAX_70MM_BUCKET_FORMAT,
+                startTimeRaw: at,
+                dateISO,
+                price: sh.price,
+              });
             },
           });
           target.pricedNow = true;
@@ -462,6 +481,15 @@ app.get("/api/imax-70mm", async (req, res) => {
                 cinemarkMovieId: match.cinemarkMovieId,
                 showtimeISO: match.showtimeISO,
               }) || sh.buyUrl;
+              // A real price read from the chain, so it belongs in the model.
+              priceModel.record({
+                chain: "cinemark",
+                theaterName: priceModelNameFor(target),
+                format: IMAX_70MM_BUCKET_FORMAT,
+                startTimeRaw: sh.time,
+                dateISO,
+                price: sh.price,
+              });
             } catch (err) {
               if (!firstErr) firstErr = err;
             }
