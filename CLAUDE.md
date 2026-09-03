@@ -559,7 +559,16 @@ the point, and a matching ZIP is strong confirmation.
   spacing cannot clear it -- it only spreads guaranteed failures over a longer
   window. `getTicketPricing()` now trips a breaker on the first challenge and
   skips the rest for `CINEMARK_CHALLENGE_COOLDOWN_MS` (120s), turning twenty
-  certain failures into one. **The actual fix is `camofox-cinemark`**: Cinemark
+  certain failures into one. **~11 priced showings is a SESSION QUOTA, not a
+  rate.** Measured across three live LA runs: 11, 12, 11 priced, and adding a
+  400ms in-page gap between fetches did not move it -- the first batch of 8
+  succeeds, the next is challenged. So pacing is the wrong lever; the tab's
+  session is the unit being counted. A pricing failure therefore adds the
+  showing UNPRICED rather than dropping it, so the learned model estimates it
+  (italic/amber, never in `price`) instead of 8 of 19 Cinemark showtimes
+  vanishing from the results. Rotating tabs after N requests is the untried
+  lever if real prices for all of them ever matter more than ~5s per extra tab
+  open. **The actual route is `camofox-cinemark`**: Cinemark
   was the last chain still requested from Render's IP, and it now goes through
   Camofox on the residential connection, which is exactly why Regal works from
   the same host. The pacing and the breaker are kept for the direct path, which

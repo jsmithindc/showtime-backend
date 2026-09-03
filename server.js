@@ -2270,6 +2270,29 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
                   // A known rate limit needs no stack -- the cause is already
                   // named, and twenty of these turned a search's log into
                   // mostly Cloudflare frames.
+                  // The showing itself is still real -- we have its theater,
+                  // time and format; only the PRICE is missing. Dropping it
+                  // threw away 8 of 19 Cinemark showtimes whenever the session
+                  // quota tripped. Add it unpriced instead and let the learned
+                  // model attach an estimate, exactly as the Regal path does.
+                  // The estimate renders italic/amber and never enters `price`.
+                  try {
+                    const unpriced = buildResultIfWithinWindow({
+                      theaterName,
+                      distanceMin: distanceMinByTheaterId[match.theaterId],
+                      startTimeRaw,
+                      format: cinemarkDisplayFormat(match.format),
+                      chain: "cinemark",
+                      bookingLink: buildCinemarkTicketUrl({
+                        theaterId: match.theaterId,
+                        showtimeId: match.showtimeId,
+                        cinemarkMovieId: match.cinemarkMovieId,
+                        showtimeISO: match.showtimeISO,
+                      }),
+                    });
+                    if (unpriced) addResult(unpriced);
+                  } catch { /* the failure below is the one worth reporting */ }
+
                   if (err.cinemarkRateLimited) {
                     console.error(`Cinemark pricing skipped for ${theaterName} showtime ${match.showtimeId}: ${err.message}`);
                   } else {
