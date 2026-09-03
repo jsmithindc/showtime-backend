@@ -576,11 +576,21 @@
      one moment worth marking. Fades itself out rather than leaving another
      permanent badge on screen. */
   .search-done {
-    display: inline-flex;
+    /* A pill on its own line rather than small text tacked onto the end of the
+       count line -- at 12px on a dim grey line it was measurably easy to miss.
+       display:flex + fit-content puts it on its own row while keeping the
+       background hugging the text. rgba rather than color-mix to match how the
+       rest of this stylesheet is written; the colour is --best (#7fa66b). */
+    display: flex;
+    width: fit-content;
     align-items: center;
-    gap: 5px;
-    margin-left: 9px;
-    font-size: 12px;
+    gap: 7px;
+    margin: 10px 0 0;
+    padding: 6px 13px;
+    border-radius: 999px;
+    background: rgba(127, 166, 107, 0.16);
+    border: 1px solid rgba(127, 166, 107, 0.45);
+    font-size: 13px;
     font-weight: 700;
     color: var(--best);
     /* Fade-in only. The fade-OUT used to be a second animation with a 3.6s
@@ -592,7 +602,7 @@
     animation: doneIn 0.32s cubic-bezier(.2,.9,.3,1.4);
   }
   .search-done.leaving { animation: doneOut 0.8s ease-in forwards; }
-  .search-done::before { content: "\2713"; font-size: 13px; }
+  .search-done::before { content: "\2713"; font-size: 14px; }
   @keyframes doneIn  { from { opacity: 0; transform: translateY(-5px) scale(0.94); } to { opacity: 1; transform: none; } }
   @keyframes doneOut { to { opacity: 0; } }
 
@@ -1899,7 +1909,7 @@
   // so it doesn't become permanent furniture.
   // When the last search finished, and how long the chip stays up.
   let searchDoneAt = 0;
-  const SEARCH_DONE_MS = 4600;
+  const SEARCH_DONE_MS = 6000;
   const SEARCH_DONE_FADE_MS = 800;   // matches .search-done.leaving's animation
 
   // The chip lives inside the count line, which every render rewrites -- so a
