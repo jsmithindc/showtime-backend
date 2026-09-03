@@ -242,6 +242,50 @@
   }
   .banner.warn { background: rgba(201, 138, 61, 0.12); border: 1px solid var(--warn); color: var(--warn); }
   .banner.error { background: rgba(201, 106, 90, 0.12); border: 1px solid var(--error); color: var(--error); }
+  /* Post-credits panel. Was a cream #fff8e6 card with hardcoded greys -- the
+     only light-themed surface on a dark page. Follows the chain report's
+     surface instead, tinted green only when the answer is "stay". */
+  .stinger {
+    margin-top: 8px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: var(--marquee-2);
+    border: 1px solid var(--stub-line);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ink-dim);
+  }
+  .stinger.stay {
+    background: rgba(125, 214, 138, 0.07);
+    border-color: rgba(125, 214, 138, 0.32);
+  }
+  .stinger-q { color: var(--ink-dim); }
+  /* The emoji sat flush against the first word. */
+  .stinger-q::before { content: "\1F37F"; margin-right: 7px; }
+  .stinger-verdict {
+    margin-top: 5px;
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: .01em;
+  }
+  .stinger-verdict.stay { color: var(--stubs-amt); }
+  .stinger-verdict.leave { color: var(--ink-dim); }
+  .stinger-rating { font-size: 12px; color: var(--ink-dim); opacity: .8; }
+  .stinger-foot {
+    margin-top: 8px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .stinger-spoiler > summary { cursor: pointer; color: var(--gold); font-size: 13px; }
+  .stinger-reveal { margin-top: 6px; font-size: 13px; color: var(--ink); }
+  /* The page sets no global link colour, so this was rendering in the
+     browser's default blue -- effectively invisible on the dark surface. */
+  .stinger-link { font-size: 12px; white-space: nowrap; margin-left: auto; color: var(--gold); }
+  .stinger-link:hover { color: var(--gold); text-decoration: underline; }
+
   .overflow-banner {
     font-size: 13px;
     color: var(--ink-dim);
@@ -2484,11 +2528,19 @@
     // since "we don't know" isn't useful to surface every time.
     const stinger = data.mediaStinger;
     if (!opts.showMovieName && stinger && stinger.hasInfo) {
-      const verdictHtml = stinger.verdict === 'STAY'
-        ? `Is there something worth watching during or after the credits? <span style="color:#2a7a2a; font-weight:700;">Yes, you should STAY</span>`
-        : stinger.verdict === 'LEAVE'
-          ? `Is there something worth watching during or after the credits? <span style="color:#888; font-weight:700;">No, you should LEAVE</span>`
-          : `<span style="font-weight:700;">Stinger info available</span>`;
+      // The verdict goes on its OWN line under the question and carries the
+      // weight -- it is the answer, and inline at the end of a sentence it read
+      // as an afterthought.
+      const isStay = stinger.verdict === 'STAY';
+      const isLeave = stinger.verdict === 'LEAVE';
+      const questionHtml = (isStay || isLeave)
+        ? 'Is there something worth watching during or after the credits?'
+        : 'Stinger info available';
+      const verdictHtml = isStay
+        ? `<div class="stinger-verdict stay">Yes, you should STAY</div>`
+        : isLeave
+          ? `<div class="stinger-verdict leave">No, you should LEAVE</div>`
+          : '';
 
       // Only worth revealing anything when there's actually something to
       // stay for -- for a LEAVE verdict (confirmed no stinger), the
@@ -2497,9 +2549,9 @@
       // link to the full page.
       const hasSpoilerText = stinger.verdict === 'STAY' && (stinger.afterCredits || stinger.duringCredits);
       const spoilerHtml = hasSpoilerText
-        ? `<details style="margin-top:6px;">
-             <summary style="cursor:pointer; color:#7a6a30; font-size:13px;">Click to see what happens</summary>
-             <div style="margin-top:6px; font-size:13px;">
+        ? `<details class="stinger-spoiler">
+             <summary>Click to see what happens</summary>
+             <div class="stinger-reveal">
                ${stinger.duringCredits ? `<div><b>During credits:</b> ${escapeHtml(stinger.duringCredits)}</div>` : ''}
                ${stinger.afterCredits ? `<div style="margin-top:4px;"><b>After credits:</b> ${escapeHtml(stinger.afterCredits)}</div>` : ''}
              </div>
@@ -2507,10 +2559,10 @@
         : '';
 
       const ratingHtml = stinger.communityRating != null
-        ? ` <span style="color:#888; font-size:12px;">(community: ${stinger.communityRating > 0 ? '+' : ''}${stinger.communityRating})</span>`
+        ? ` <span class="stinger-rating">community: ${stinger.communityRating > 0 ? '+' : ''}${stinger.communityRating}</span>`
         : '';
       const linkHtml = stinger.pageUrl
-        ? ` <a href="${stinger.pageUrl}" target="_blank" rel="noopener" style="font-size:12px; white-space:nowrap;">Full details &rarr;</a>`
+        ? `<a class="stinger-link" href="${stinger.pageUrl}" target="_blank" rel="noopener">Full details &rarr;</a>`
         : '';
 
       // Into its OWN container, replaced rather than appended. This used to be
@@ -2525,7 +2577,13 @@
         stingerBox.id = 'stingerBox';
         els.statusLine.appendChild(stingerBox);
       }
-      stingerBox.innerHTML = `<div class="banner" style="margin-top:8px; background:#fff8e6; border:1px solid #f0dca0;">🍿 ${verdictHtml}${ratingHtml}${linkHtml}${spoilerHtml}</div>`;
+      stingerBox.innerHTML =
+        `<div class="stinger${isStay ? ' stay' : ''}">` +
+          `<div class="stinger-q">${questionHtml}</div>` +
+          verdictHtml +
+          ratingHtml +
+          (spoilerHtml || linkHtml ? `<div class="stinger-foot">${spoilerHtml}${linkHtml}</div>` : '') +
+        `</div>`;
     } else {
       // No stinger for this render -- drop a panel left over from a previous
       // one rather than leaving it describing the wrong film.
