@@ -2697,7 +2697,7 @@
   }
 
   function runCurrentModeSearch() {
-    if (searchMode === 'imax70') return loadImax70();
+    if (searchMode === 'imax70') { imax70Data = null; return loadImax70(); }
     return searchMode === 'window' ? runWindowSearch() : runSearch();
   }
 
@@ -2706,9 +2706,17 @@
   // on them today. Ignores the search radius on purpose -- someone asking will
   // drive further than for an ordinary showing.
   let imax70Origin = null;   // remembered so follow-up lookups don't re-geocode
+  let imax70Data = null;     // last full response, so follow-ups can merge into it
   async function loadImax70(opts) {
     const { maxMiles, venues, priceVenue, listOnly } = (typeof opts === 'string' ? { maxMiles: opts } : (opts || {}));
-    els.imax70Body.innerHTML = '<div style="font-size:12px; color:var(--ink-dim);">Looking up IMAX 70mm venues&hellip;</div>';
+    // A follow-up asks about SOME venues; the response marks every other venue
+    // notRequested. Replacing the view with that would throw away everything
+    // already on screen to price a single row, so follow-ups merge instead --
+    // and only a first load gets the "looking up" wipe.
+    const isFollowUp = !!(venues || priceVenue) && !!imax70Data;
+    if (!isFollowUp) {
+      els.imax70Body.innerHTML = '<div style="font-size:12px; color:var(--ink-dim);">Looking up IMAX 70mm venues&hellip;</div>';
+    }
     els.searchBtn.disabled = true;
     try {
       let lat = els.lat.value, lng = els.lng.value;
@@ -2730,7 +2738,17 @@
       if (els.searchDate && els.searchDate.value) params.set('date', els.searchDate.value);
       const data = await fetch(`/api/imax-70mm?${params}`).then((r) => r.json());
       if (data.error) throw new Error(data.error);
-      renderImax70(data);
+      if (isFollowUp) {
+        // Take only the venues this call actually looked at. A venue that came
+        // back notRequested carries no new information and must not clobber
+        // what we already know about it.
+        const fresh = new Map((data.venues || []).filter((v) => v.checked || v.error).map((v) => [v.name, v]));
+        imax70Data.venues = imax70Data.venues.map((v) => (fresh.has(v.name) ? { ...v, ...fresh.get(v.name) } : v));
+        imax70Data.films = { ...(imax70Data.films || {}), ...(data.films || {}) };
+      } else {
+        imax70Data = data;
+      }
+      renderImax70(imax70Data);
     } catch (err) {
       els.imax70Body.innerHTML = `<div class="banner error">Couldn't look that up: ${escapeHtml(err.message)}</div>`;
     } finally {
