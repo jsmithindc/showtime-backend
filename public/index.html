@@ -519,6 +519,20 @@
     white-space: nowrap;
     cursor: help;
   }
+  /* Certified Fresh / Verified Hot. Deliberately NOT Rotten Tomatoes' own
+     badge artwork -- that is Fandango's trademark and would mean hotlinking
+     their CDN. This is our own mark for the same underlying state, which the
+     scorecard already gives us (criticsScore.certified /
+     audienceScore.certifiedFresh); it was previously only mentioned in a
+     tooltip nobody hovers. */
+  .rating.certified {
+    color: var(--gold);
+    border: 1px solid var(--gold-dim);
+    border-radius: 999px;
+    padding: 1px 7px;
+    font-weight: 700;
+  }
+  .rating.certified .seal { font-size: 10px; opacity: .9; margin-left: 1px; }
 
   /* Window-search cards answer "what can I watch"
 , so the FILM is the subject
@@ -1277,15 +1291,26 @@
     const parts = [];
     if (r.rottenTomatoes != null) {
       const fresh = r.rottenTomatoes >= 60;
-      const cf = r.rtCertifiedFresh ? ' Certified Fresh.' : '';
-      parts.push(`<span class="rating" title="Tomatometer -- share of critics rating it positively.${cf}">${fresh ? '🍅' : '🫗'} ${r.rottenTomatoes}%</span>`);
+      // Certified Fresh is a stronger claim than "over 60%": it needs 75%+ and
+      // enough reviews, Top Critics among them. Worth showing, not just
+      // whispering in a title attribute.
+      const cf = !!r.rtCertifiedFresh;
+      parts.push(
+        `<span class="rating${cf ? ' certified' : ''}" title="Tomatometer -- share of critics rating it positively.` +
+        `${cf ? ' Certified Fresh: 75%+ with enough reviews, including Top Critics.' : ''}">` +
+        `${fresh ? '🍅' : '🫗'} ${r.rottenTomatoes}%${cf ? '<span class="seal">✦</span>' : ''}</span>`
+      );
     }
     // Audience score sits next to the critic score rather than replacing it --
     // they disagree often, and which one you trust is the reader's call.
     if (r.rtAudience != null) {
       const liked = r.rtAudience >= 60;
-      const vh = r.rtVerifiedHot ? ' Verified Hot.' : '';
-      parts.push(`<span class="rating" title="Popcornmeter -- share of verified audience ratings that are positive.${vh}">${liked ? '🍿' : '🥤'} ${r.rtAudience}%</span>`);
+      const vh = !!r.rtVerifiedHot;
+      parts.push(
+        `<span class="rating${vh ? ' certified' : ''}" title="Popcornmeter -- share of verified audience ratings that are positive.` +
+        `${vh ? ' Verified Hot: 90%+ from a high volume of verified ratings.' : ''}">` +
+        `${liked ? '🍿' : '🥤'} ${r.rtAudience}%${vh ? '<span class="seal">✦</span>' : ''}</span>`
+      );
     }
     if (r.metacritic != null) {
       parts.push(`<span class="rating" title="Metacritic -- weighted average of critic scores, out of 100">Ⓜ ${r.metacritic}</span>`);
