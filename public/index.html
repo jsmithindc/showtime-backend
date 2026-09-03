@@ -909,6 +909,13 @@
     els.results.style.display = isImax ? 'none' : '';
     els.statusLine.style.display = isImax ? 'none' : '';
     if (els.pageFooter) els.pageFooter.style.display = isImax ? 'none' : '';
+    // The timing bar reports the shared search machinery, so it belongs to the
+    // two search modes only. applyModeSnapshot owns its visibility -- and is
+    // skipped for the IMAX tab -- so without this the bar followed the user
+    // over and reported a search that tab never ran. Coming back restores it
+    // from the snapshot captured above.
+    const timingBarEl = document.getElementById('timingBar');
+    if (timingBarEl && isImax) timingBarEl.style.display = 'none';
     if (!isImax) applyModeSnapshot(modeSnapshots[mode]);
   }
   els.modeMovieBtn.addEventListener('click', () => setMode('movie'));
@@ -1156,6 +1163,25 @@
       (data.ratings ? ratingsHtml(data.ratings) : '') +
       `<div class="film-hero-count">${countLine}</div>` +
     `</div>`;
+  }
+
+  // The hero is repainted on every streamed result, and rewriting statusLine's
+  // innerHTML destroys and recreates the <img> -- so the poster visibly
+  // flickered as showings filtered in. Everything above the count line is
+  // stable during a search, so rebuild only when it actually changes and
+  // otherwise update the count in place, leaving the existing <img> node alone.
+  let lastHeroShell = null;
+  function renderFilmHero(data, countLine) {
+    // Compared against the real markup rather than a hand-listed set of
+    // fields, so a new hero element can't be forgotten here.
+    const shell = filmHeroHtml(data, { countLine: '' });
+    const countEl = els.statusLine.querySelector('.film-hero-count');
+    if (countEl && shell === lastHeroShell) {
+      countEl.innerHTML = countLine;
+      return;
+    }
+    lastHeroShell = shell;
+    els.statusLine.innerHTML = filmHeroHtml(data, { countLine });
   }
 
   function ratingsHtml(r) {
@@ -1418,9 +1444,9 @@
     const localRuntimeMin = _selectedOption && _selectedOption.value === movie && _selectedOption.dataset.runtime
       ? Number(_selectedOption.dataset.runtime)
       : null;
-    els.statusLine.innerHTML = filmHeroHtml(
+    renderFilmHero(
       { movie, ...(localRuntimeMin ? { runtimeMinutes: localRuntimeMin } : {}) },
-      { countLine: 'Searching theaters&hellip;' }
+      'Searching theaters&hellip;'
     );
 
     const activeFormats = [...document.querySelectorAll('#formatChips .chip.on')].map((c) => c.dataset.format);
@@ -1564,9 +1590,9 @@
         // paint it now and let the poster and scores fill in as they arrive,
         // rather than leaving the page blank for the whole search.
         if (!(lastRenderOpts || {}).showMovieName) {
-          els.statusLine.innerHTML = filmHeroHtml(
+          renderFilmHero(
             { ...searchMeta, movie: searchMeta.movie || movie },
-            { countLine: 'Searching theaters&hellip;' }
+            'Searching theaters&hellip;'
           );
         }
         return;
@@ -2306,11 +2332,9 @@
         ? `${countLabel} ${subjectLabel} on <b>${dateLabel}</b> (${priced} priced). Location resolved to: ${locationDisplay}`
         : `No movies fit that window on <b>${dateLabel}</b>. Location resolved to: ${locationDisplay}`;
     } else {
-      els.statusLine.innerHTML = filmHeroHtml(data, {
-        countLine: allResults.length
-          ? `${countLabel} on <b>${dateLabel}</b> (${priced} priced) in ${locationDisplay}`
-          : `No showings found within your window on <b>${dateLabel}</b> in ${locationDisplay}`,
-      });
+      renderFilmHero(data, allResults.length
+        ? `${countLabel} on <b>${dateLabel}</b> (${priced} priced) in ${locationDisplay}`
+        : `No showings found within your window on <b>${dateLabel}</b> in ${locationDisplay}`);
     }
 
     // Footer, not the header: both of these are reference material about the
