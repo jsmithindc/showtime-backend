@@ -1,4 +1,5 @@
 const express = require("express");
+const compression = require("compression");
 const pLimit = require("p-limit");
 const { findNearbyTheaters } = require("./lib/theaters-overpass");
 const { estimatedMinutesAway, prefilterMinutesAway, minutesToMeters } = require("./lib/distance");
@@ -141,6 +142,21 @@ function searchRateLimiter(req, res, next) {
   existing.count += 1;
   next();
 }
+
+// gzip. public/index.html is ~150KB of inline HTML/CSS/JS and was served
+// uncompressed on every cold load.
+//
+// SSE is excluded DELIBERATELY. compression buffers, and text/event-stream
+// counts as compressible by default -- so the search's streamed results would
+// sit in a buffer instead of arriving as each chain reports, which is the whole
+// point of streaming them ("first results: 8.0s" against a 25s search).
+app.use(compression({
+  filter(req, res) {
+    const type = String(res.getHeader("Content-Type") || "");
+    if (type.includes("text/event-stream")) return false;
+    return compression.filter(req, res);
+  },
+}));
 
 app.use(express.static("public"));
 

@@ -513,13 +513,19 @@ the point, and a matching ZIP is strong confirmation.
   (SerpApi, Scrape.do, ZenRows, Apify, Firecrawl, Bright Data, AMC vendor
   key). `start.sh.example` is the safe, placeholder-only template — copy it
   to `start.sh` for local dev, never edit `start.sh.example` with real
-  values. **There is currently no `.gitignore` file in this repo** despite
-  the commit history (`d5ecec2`) claiming start.sh "is now gitignored" —
-  it's untracked today only because it's never been `git add`ed, not
-  because anything prevents it. A bare `git add -A` or `git add .` would
-  stage it and leak every credential above. Treat this as standing
-  first-priority cleanup: add a `.gitignore` with `start.sh` (and
-  `node_modules/`) in it before relying on habit alone.
+  values. **A `.gitignore` DOES exist** and covers `start.sh`,
+  `node_modules/`, `.overpass-cache.json`, `.serpapi-schedule-cache.json`
+  and `cache/`; `git add -An` stages nothing. An older version of this file
+  claimed there was none and called adding one standing first-priority
+  cleanup — that was stale, and it is worth checking `git check-ignore -v`
+  rather than trusting either claim.
+  **The real exposure is historical, and a `.gitignore` cannot fix it:**
+  `start.sh` WAS committed (`c62f6b1`, `211da66`, `911c41d`) before
+  `d5ecec2` removed it, and at `911c41d` it carried `ZENROWS_API_KEY` and
+  `AMC_VENDOR_KEY` with real-looking values. Those blobs are still
+  reachable in history. If this repo is or ever was public, treat both keys
+  as disclosed and rotate them; rewriting history (filter-repo) only helps
+  if nobody has cloned or forked it.
 - **Regal ticket types do not always fill `LongDescription`.** Colorado Center
   9's IMAX 70mm ticket arrives as `{Description: "General Admission",
   LongDescription: "", PriceInCents: 3199}` -- so a matcher reading only
