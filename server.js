@@ -32,6 +32,7 @@ const THEATER_DISPLAY_NAMES = {
 };
 const EXCLUDED_THEATERS = require("./lib/excluded-theaters");
 const { redisConfigured, readCache, writeCache } = require("./lib/disk-cache");
+const { project: projectUS, VIEWBOX: US_VIEWBOX } = require("./lib/us-map");
 const { getPricedShowtimes: getAmcPricedShowtimes, getShowtimesForTheater: getAmcShowtimesForTheater, getRuntimeFromCatalog: getAmcRuntimeFromCatalog } = require("./lib/priceAdapters/amc-official");
 const { getAmcTheatersByState, findClosestAmcTheater } = require("./lib/amc-theaters-by-state");
 const AMC_THEATRE_MAP = require("./lib/amc-theatre-map"); // static fallback when live API is unavailable
@@ -574,6 +575,16 @@ app.get("/api/imax-70mm", async (req, res) => {
       (skippedFar ? `, ${skippedFar} beyond ${maxMiles}mi not queried` : "") +
       (withFilm.length ? ` (nearest: ${withFilm[0].name}, ${withFilm[0].distanceMin}min)` : "")
     );
+    // Projected HERE rather than in the browser so the dots and the outline
+    // come from one projection. Doing it client-side would mean a second
+    // implementation that has to stay in step with lib/us-map.js forever.
+    for (const v of venues) {
+      if (typeof v.lat === "number" && typeof v.lng === "number") {
+        const [mx, my] = projectUS(v.lat, v.lng);
+        v.mapX = mx;
+        v.mapY = my;
+      }
+    }
     res.json({ dateISO, movie, maxMiles: maxMiles === Infinity ? "all" : maxMiles, skippedFar, films, venues });
   } catch (err) {
     console.error("IMAX 70mm lookup failed:", err.message);
@@ -3299,6 +3310,15 @@ app.get("/api/geocode", async (req, res) => {
 // first. Doesn't replace /api/movies -- that's still how you'd find
 // something playing only at a specific local/independent theater that
 // wouldn't show up in a general nationwide "in theaters" listing.
+// The US outline for the IMAX 70mm map. Its own endpoint because it is 25KB
+// of static path data: repeating it inside every /api/imax-70mm response would
+// re-send it on every lookup, and inlining it in index.html would weigh down a
+// page most visits never open that tab from. Immutable, so cache it hard.
+app.get("/api/us-map", (req, res) => {
+  res.set("Cache-Control", "public, max-age=86400");
+  res.json({ viewBox: US_VIEWBOX, path: require("./lib/us-map-path") });
+});
+
 app.get("/api/popular-movies", async (req, res) => {
   // Pull live showtimes from AMC Mesquite 30 (Dallas-area anchor) as the
   // default "what's playing" list shown before the user sets a location.

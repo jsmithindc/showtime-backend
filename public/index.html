@@ -591,6 +591,20 @@
   .imax70-fee { margin-top: 2px; font-size: 10px; color: var(--ink-dim); opacity: .75; cursor: help; }
   .imax70-buy { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--stub-line); }
   .imax70-buy:hover { color: var(--gold); }
+  /* The 25 screens on a US map. Deliberately an inline SVG rather than a tile
+     map: no external tiles, no map library, nothing to fail mid-search, and it
+     takes the page's own colours instead of fighting a light basemap. */
+  .imax70-map { width: 100%; height: auto; margin: 6px 0 14px; display: block; }
+  .imax70-map .outline { fill: var(--marquee-2); stroke: var(--stub-line); stroke-width: 1; }
+  .imax70-map .venue { cursor: pointer; }
+  .imax70-map .venue circle { stroke: var(--marquee); stroke-width: 1.5; transition: r .12s ease; }
+  .imax70-map .venue:hover circle { r: 9; }
+  .imax70-map .venue.has-showings circle { fill: var(--gold); }
+  .imax70-map .venue.checked circle { fill: var(--ink-dim); opacity: .75; }
+  .imax70-map .venue.unchecked circle { fill: var(--stub-line); }
+  .imax70-map-key { font-size: 10px; color: var(--ink-dim); opacity: .8; margin: -8px 0 14px; }
+  .imax70-map-key b { color: var(--gold); font-weight: 700; }
+
   .imax70-foot { margin-top: 8px; font-size: 10px; color: var(--ink-dim); opacity: .75; }
   #imax70Intro {
     margin: 2px 0 16px;
@@ -2965,6 +2979,16 @@
   // in its default enabled state -- so a button marked busy at click time came
   // back clickable as soon as some OTHER request returned, and a second click
   // fired a duplicate lookup while the first was still running.
+  // Fetched once and kept: 25KB of static path data, and the endpoint sets a
+  // day-long Cache-Control, so this is one request per session at most.
+  let usMapData = null;
+  async function ensureUsMap() {
+    if (usMapData !== null) return usMapData;
+    try { usMapData = await fetch('/api/us-map').then((r) => r.json()); }
+    catch { usMapData = false; }   // false, not null: don't retry every render
+    return usMapData;
+  }
+
   const imax70Pricing = new Set();   // venue names currently being priced
   let imax70Checking = false;        // a check-selected / check-all in flight
   async function loadImax70(opts) {
@@ -3002,7 +3026,12 @@
       if (venues) params.set('venues', venues);
       if (priceVenue) params.set('priceVenue', priceVenue);
       if (els.searchDate && els.searchDate.value) params.set('date', els.searchDate.value);
-      const data = await fetch(`/api/imax-70mm?${params}`).then((r) => r.json());
+      const [data] = await Promise.all([
+        fetch(`/api/imax-70mm?${params}`).then((r) => r.json()),
+        // In parallel, not before: the map is decoration and must never delay
+        // the answer. After the first call it resolves instantly anyway.
+        ensureUsMap(),
+      ]);
       if (data.error) throw new Error(data.error);
       if (isFollowUp) {
         // Take only the venues this call actually looked at. A venue that came
@@ -3039,6 +3068,34 @@
       timing.finish();
       els.searchBtn.disabled = false;
     }
+  }
+
+  // One dot per screen. Colour says what we know about it -- gold if it has a
+  // showing, dim if we checked and it hasn't, dimmer still if it wasn't
+  // checked -- which is the same three-way distinction the list below draws,
+  // just at a glance.
+  function imax70MapHtml(venues) {
+    if (!usMapData || !usMapData.path) return '';
+    const dots = venues
+      .filter((v) => typeof v.mapX === 'number' && typeof v.mapY === 'number')
+      .map((v) => {
+        const showing = (v.showings || []).find((sh) => sh.buyUrl);
+        const href = showing
+          ? showing.buyUrl
+          : `https://www.google.com/maps/search/${encodeURIComponent(`${v.name} ${v.city || ''} ${v.state || ''}`)}`;
+        const cls = (v.showings && v.showings.length) ? 'has-showings' : (v.checked ? 'checked' : 'unchecked');
+        const dist = v.distanceMin != null
+          ? ` — ${v.distanceMin > 180 ? `${Math.round(v.distanceMin / 60)}h drive` : `${v.distanceMin} min`}`
+          : '';
+        const label = `${chainFirstName(v.name)} · ${v.city || ''}, ${v.state || ''}${dist}`;
+        return `<a class="venue ${cls}" href="${escapeHtml(href)}" target="_blank" rel="noopener">` +
+               `<title>${escapeHtml(label)}</title>` +
+               `<circle cx="${v.mapX}" cy="${v.mapY}" r="6"></circle></a>`;
+      }).join('');
+    if (!dots) return '';
+    return `<svg class="imax70-map" viewBox="${escapeHtml(usMapData.viewBox)}" role="img" aria-label="US map of IMAX 70mm screens">` +
+             `<path class="outline" d="${usMapData.path}"></path>${dots}</svg>` +
+           `<div class="imax70-map-key"><b>Gold</b> = showing today &middot; grey = checked, nothing on 70mm &middot; faint = not checked. Hover for the venue, click to open it.</div>`;
   }
 
   function renderImax70(data) {
@@ -3157,6 +3214,7 @@
       .filter((v) => !(v.showings && v.showings.length) && !v.error && !v.tooFar)
       .slice(0, 6);
     els.imax70Body.innerHTML =
+      imax70MapHtml(venues) +
       (playing.length
         ? `<div class="status-line"><b>${playing.length}</b> venue${playing.length === 1 ? '' : 's'} with an IMAX 70mm showing today, nearest first.</div>` + playing.map(row).join('')
         : `<div class="status-line">No IMAX 70mm showings found today at the ${checked} venue${checked === 1 ? '' : 's'} we can check.</div>`) +
