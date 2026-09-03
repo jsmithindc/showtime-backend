@@ -400,7 +400,19 @@ the distance gate), and `priceVenue=<name>` runs real pricing for one venue.
 AMC's prices and purchase links arrive free with its showtimes; Regal's price
 is behind createOrder and Cinemark's behind a TicketSeatMap page fetch, so both
 are only fetched on request -- which is why the "Price these showings" button
-appears on Regal and Cinemark rows and not AMC ones.
+appears on Regal, Cinemark and Harkins rows and not AMC ones.
+
+**Harkins in this panel prices by TIME-MATCHING, like Cinemark, and for a
+different reason.** Its 15/70 venue (Arizona Mills) has an `atomSlug`, and the
+showings branch is gated `chain === "harkins" && !v.atomSlug` -- so its 70mm
+showings come from Atom, which tags the print, rather than from Harkins, which
+reports only "IMAX". Atom rows carry no `sessionId`, so `priceVenue` fetches
+Harkins' own sessions for that theater and matches them back by start time.
+Confirmed live 2026-09-03: Harkins lists IMAX sessions at 11:45 and 15:30 for
+Arizona Mills, exactly Atom's 70mm times, and `GetTicketTypes` returned a real
+$10.75 Matinee price. Note pricing needs the theater's `cinemaId`
+(`0000000002`), which is a DIFFERENT field from the `harkinsId` in
+`chainCode` (`16`) -- reusing chainCode there silently prices nothing.
 
 **Cinemark pricing in this panel takes an extra step, because its showtimes
 endpoint is MOVIE-scoped.** It cannot be asked "what is on at this theater",

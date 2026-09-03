@@ -309,6 +309,10 @@ app.get("/api/imax-70mm", async (req, res) => {
             .filter((x) => !only70mm || /imax/i.test(x.format || ""))
             .map((x) => ({ time: (x.showtimeOffset || "").slice(11, 16), format: x.format,
                            movieName: x.movieName || null, imax70mm: /imax/i.test(x.format || ""),
+                           // Carried so priceVenue can price these later. Harkins
+                           // needs the sessionId AND the theater's cinemaId, which
+                           // is a different field from the harkinsId in chainCode.
+                           sessionId: x.sessionId || null,
                            confirmed: false }));
         } else if (v.atomSlug) {
           // Everything our own adapters can't answer for -- Cinemark, the
@@ -402,6 +406,77 @@ app.get("/api/imax-70mm", async (req, res) => {
           });
           target.pricedNow = true;
           console.error(`IMAX 70mm: priced ${target.name} -- ${target.showings.filter((x) => x.price != null).length}/${target.showings.length} showings, ${costTracker.total} credit(s).`);
+        } catch (err) {
+          target.priceError = err.message;
+          console.error(`IMAX 70mm: pricing ${priceVenue} failed:`, err.message);
+        }
+      } else if (target && target.chain === "harkins" && target.chainCode && target.showings && target.showings.length) {
+        // Harkins already had a working pricing adapter -- the main search uses
+        // it every run -- but this panel never called it, so Arizona Mills (the
+        // one Harkins 15/70 screen) showed times with no prices and no way to
+        // ask for them.
+        try {
+          // chainCode is the harkinsId; pricing needs the cinemaId, a separate
+          // field on the same theater record. Looking it up is the whole reason
+          // this can't just reuse chainCode.
+          const harkinsTheaters = await getHarkinsTheaters();
+          const theater = (harkinsTheaters || []).find((t) => String(t.harkinsId) === String(target.chainCode));
+          if (!theater || !theater.cinemaId) {
+            throw new Error(`no cinemaId for harkinsId ${target.chainCode} in the Harkins theater list`);
+          }
+          // These showings usually came from ATOM, not from Harkins: the
+          // showings branch is gated on !v.atomSlug because Harkins reports
+          // only "IMAX" and never "IMAX 70mm", while Atom tags the print
+          // outright. Atom rows carry no sessionId, so -- exactly as with
+          // Cinemark -- fetch Harkins' own sessions for this theater and match
+          // them back by start time. A showing Atom knows about that Harkins
+          // doesn't list at the same HH:MM simply goes unpriced.
+          const sessions = await getHarkinsAllForVenue(target, dateISO);
+          const sessionAt = new Map();
+          for (const x of sessions || []) {
+            const t = String(x.showtimeOffset || "").slice(11, 16);
+            if (t && x.sessionId && !sessionAt.has(t)) sessionAt.set(t, x);
+          }
+
+          let firstErr = null;
+          await Promise.all(target.showings.map(async (sh) => {
+            const match = sessionAt.get(sh.time);
+            const sessionId = sh.sessionId || (match && match.sessionId);
+            if (!sessionId) return;
+            try {
+              const priced = await getHarkinsTicketPricing({ cinemaId: theater.cinemaId, sessionId });
+              if (priced.price == null) return;
+              // Same treatment as the main search: the adapter returns the bare
+              // ticket price and the service fee is added here, so the number
+              // matches what checkout asks for rather than undercounting by ~$2
+              // against every other chain's fee-inclusive figure.
+              const fee = estimateHarkinsFee(sh.format || (match && match.format));
+              sh.priceBeforeFee = priced.price;
+              sh.price = Math.round((priced.price + (fee || 0)) * 100) / 100;
+              sh.estimatedFee = fee;
+              sh.feeStatus = "estimated";
+              priceModel.record({
+                chain: "harkins",
+                theaterName: priceModelNameFor(target),
+                format: IMAX_70MM_BUCKET_FORMAT,
+                startTimeRaw: sh.time,
+                dateISO,
+                price: sh.price,
+              });
+            } catch (err) {
+              if (!firstErr) firstErr = err;
+            }
+          }));
+          const pricedCount = target.showings.filter((x) => x.price != null).length;
+          target.pricedNow = true;
+          console.error(`IMAX 70mm: priced ${target.name} -- ${pricedCount}/${target.showings.length} showings, 0 credit(s).`);
+          if (!pricedCount) {
+            if (firstErr) throw firstErr;
+            throw new Error(
+              `Harkins returned no ticket types for any of these showings ` +
+              `(matched ${target.showings.filter((x) => sessionAt.has(x.time)).length}/${target.showings.length} to a Harkins session)`
+            );
+          }
         } catch (err) {
           target.priceError = err.message;
           console.error(`IMAX 70mm: pricing ${priceVenue} failed:`, err.message);
