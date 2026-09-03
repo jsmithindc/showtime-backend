@@ -529,7 +529,8 @@
   .imax70-film-title { font-weight: 700; color: var(--ink); font-size: 12px; }
   .imax70-film-meta { font-size: 11px; color: var(--ink-dim); margin-top: 1px; }
   .imax70-film .ratings { margin: 3px 0 0; }
-  .imax70-price { color: var(--stubs-amt); font-weight: 700; }
+  .imax70-price { color: var(--stubs-amt); font-weight: 700; cursor: help; }
+  .imax70-fee { margin-top: 2px; font-size: 10px; color: var(--ink-dim); opacity: .75; cursor: help; }
   .imax70-buy { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--stub-line); }
   .imax70-buy:hover { color: var(--gold); }
   .imax70-foot { margin-top: 8px; font-size: 10px; color: var(--ink-dim); opacity: .75; }
@@ -1921,6 +1922,9 @@
     searchDoneAt = Date.now();
     document.querySelectorAll('.search-done').forEach((n) => n.remove());
     applySearchDoneChip();
+    // Logged so "did the completion indicator actually fire?" is answerable
+    // from the console rather than by catching a 12px chip in the act.
+    console.log(`Search complete -- indicator shown for ${SEARCH_DONE_MS / 1000}s.`);
     setTimeout(() => {
       document.querySelectorAll('.search-done').forEach((n) => n.classList.add('leaving'));
     }, SEARCH_DONE_MS - SEARCH_DONE_FADE_MS);
@@ -2494,7 +2498,23 @@
         ? ` <a href="${stinger.pageUrl}" target="_blank" rel="noopener" style="font-size:12px; white-space:nowrap;">Full details &rarr;</a>`
         : '';
 
-      els.statusLine.innerHTML += `<div class="banner" style="margin-top:8px; background:#fff8e6; border:1px solid #f0dca0;">🍿 ${verdictHtml}${ratingHtml}${linkHtml}${spoilerHtml}</div>`;
+      // Into its OWN container, replaced rather than appended. This used to be
+      // `statusLine.innerHTML += ...`, which only ever showed one panel because
+      // renderFilmHero happened to rewrite the whole status line on every
+      // render and wiped the previous copy. Now that the hero is preserved
+      // between renders (so the poster stops flickering), an append accumulated
+      // a fresh panel per render.
+      let stingerBox = document.getElementById('stingerBox');
+      if (!stingerBox) {
+        stingerBox = document.createElement('div');
+        stingerBox.id = 'stingerBox';
+        els.statusLine.appendChild(stingerBox);
+      }
+      stingerBox.innerHTML = `<div class="banner" style="margin-top:8px; background:#fff8e6; border:1px solid #f0dca0;">🍿 ${verdictHtml}${ratingHtml}${linkHtml}${spoilerHtml}</div>`;
+    } else {
+      // No stinger for this render -- drop a panel left over from a previous
+      // one rather than leaving it describing the wrong film.
+      document.getElementById('stingerBox')?.remove();
     }
 
     if (allResults.length === 0) {
@@ -2932,7 +2952,14 @@
     const row = (v) => {
       const times = (v.showings || []).slice(0, 10).map((sh) => {
         const t = escapeHtml(String(sh.time || '').slice(0, 5));
-        const price = sh.price != null ? ` <span class="imax70-price">$${sh.price.toFixed(2)}</span>` : '';
+        // The displayed number is the total. Where the chain gave us the split,
+        // the tooltip says what it is -- and whether the fee half is a real
+        // figure or a derived one.
+        const fee = sh.fee != null ? sh.fee : sh.estimatedFee;
+        const breakdown = (sh.priceBeforeFee != null && fee != null)
+          ? ` title="$${sh.priceBeforeFee.toFixed(2)} ticket + $${fee.toFixed(2)} booking fee${sh.feeStatus === 'estimated' ? ' (estimated)' : ' (confirmed)'}"`
+          : '';
+        const price = sh.price != null ? ` <span class="imax70-price"${breakdown}>$${sh.price.toFixed(2)}</span>` : '';
         // Marked when the source didn't actually say 70mm -- a single-screen
         // house has nothing to disambiguate, so it is a strong inference, not
         // a statement. The tooltip carries the distinction.
@@ -2944,6 +2971,27 @@
           ? `<a href="${escapeHtml(sh.buyUrl)}" target="_blank" rel="noopener" class="imax70-buy">${label}</a>`
           : label;
       }).join(' &middot; ');
+
+      // Fee basis, stated once per venue rather than on every showtime: all of
+      // a venue's showings come from one chain, so the BASIS is uniform even
+      // when Cinemark's per-showing amounts differ. Regal's API returns the
+      // ticket price without the fee, so this app derives it from the format;
+      // Cinemark returns the real fee. Those are different claims and the
+      // panel shouldn't present them as the same one.
+      const feeNote = (() => {
+        const split = (v.showings || []).filter((sh) => sh.price != null && sh.priceBeforeFee != null);
+        const fees = [...new Set(
+          split.map((sh) => (sh.fee != null ? sh.fee : sh.estimatedFee)).filter((f) => f != null)
+        )];
+        if (!fees.length) return '';
+        const amount = fees.length === 1
+          ? `$${fees[0].toFixed(2)}`
+          : `$${Math.min(...fees).toFixed(2)}\u2013$${Math.max(...fees).toFixed(2)}`;
+        return split.some((sh) => sh.feeStatus === 'estimated')
+          ? `<div class="imax70-fee" title="Regal returns the ticket price without the booking fee, so this app derives the fee from the format. The ticket price itself is read from the chain.">includes an estimated ${amount} booking fee</div>`
+          : `<div class="imax70-fee" title="Cinemark returns the real per-showing fee alongside the ticket price, so this is its own figure rather than an estimate.">includes a confirmed ${amount} booking fee</div>`;
+      })();
+
       const filmNames = [...new Set((v.showings || []).map((sh) => sh.movieName).filter(Boolean))];
       // Same details the free-time search puts on a card: poster, year,
       // runtime, scores. Shown once per venue rather than once per showtime,
@@ -2966,6 +3014,7 @@
             <div><b>${escapeHtml(chainFirstName(v.name))}</b> &middot; ${escapeHtml(v.city)}, ${escapeHtml(v.state)}</div>
             ${filmBlock}
             ${times ? `<div class="imax70-row-times">${times}</div>` : ''}
+            ${feeNote}
             ${v.seating ? `<div class="imax70-row-seats" title="${escapeHtml(v.seating.note || '')}">sit in row ${escapeHtml(v.seating.best)}</div>` : ''}
             ${(v.showings && v.showings.length && v.showings.every((sh) => sh.price == null) && (v.chain === 'regal' || v.chain === 'cinemark'))
               ? `<button class="locate-btn imax70-price-btn" data-venue="${escapeHtml(v.name)}"${imax70Pricing.has(v.name) ? ' disabled' : ''} style="margin-top:5px; font-size:11px;">` +
