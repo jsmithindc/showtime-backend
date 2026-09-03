@@ -706,7 +706,10 @@
         <label for="searchDate">Date</label>
         <input type="date" id="searchDate" />
       </div>
-      <div class="field">
+      <!-- Its own id so the IMAX 70mm tab can hide the radius while keeping the
+           date: that lookup deliberately ignores distance, but "what's on
+           70mm on Friday" is a real question. -->
+      <div class="field" id="radiusField">
         <label for="radius">Within (minutes)</label>
         <input type="number" id="radius" value="15" min="1" />
       </div>
@@ -801,6 +804,7 @@
     specificMovieFields: document.getElementById('specificMovieFields'),
     windowFields: document.getElementById('windowFields'),
     dateRadiusFields: document.getElementById('dateRadiusFields'),
+    radiusField: document.getElementById('radiusField'),
     modeImaxBtn: document.getElementById('modeImaxBtn'),
     formatSection: document.getElementById('formatSection'),
     chainSection: document.getElementById('chainSection'),
@@ -891,7 +895,10 @@
     // radius, and "IMAX 70mm" is the format.
     els.specificMovieFields.style.display = (isWindow || isImax) ? 'none' : '';
     els.windowFields.style.display = isWindow ? '' : 'none';
-    els.dateRadiusFields.style.display = isImax ? 'none' : '';
+    // Date stays on the IMAX tab -- only the radius goes, since that lookup
+    // ignores distance by design.
+    els.dateRadiusFields.style.display = '';
+    if (els.radiusField) els.radiusField.style.display = isImax ? 'none' : '';
     if (els.formatSection) els.formatSection.style.display = isImax ? 'none' : '';
     if (els.chainSection) els.chainSection.style.display = isImax ? 'none' : '';
     els.searchBtn.textContent = isImax ? 'Find IMAX 70mm' : isWindow ? 'Find what fits' : 'Find showtimes';
@@ -2697,7 +2704,7 @@
   }
 
   function runCurrentModeSearch() {
-    if (searchMode === 'imax70') { imax70Data = null; return loadImax70(); }
+    if (searchMode === 'imax70') { imax70Data = null; return loadImax70(); }   // fresh date/location -> fresh data
     return searchMode === 'window' ? runWindowSearch() : runSearch();
   }
 
