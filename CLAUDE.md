@@ -282,6 +282,25 @@ shows only the location field -- date, radius, deadline, format and chain
 filters are all hidden, because the lookup ignores the radius and "IMAX 70mm"
 IS the format -- and renders into its own `#imax70Body`.
 
+**Atom Tickets covers what our own adapters can't.** `lib/imax-atom.js` reads a
+venue's Atom page (hand-verified `atomSlug` per venue) and reads the `IMAX70MM`
+attribute Atom tags a showtime group with -- the only machine-readable 70mm
+signal for Cinemark (movie-scoped API) and the museums and independents with no
+adapter. Validated against Harkins Arizona Mills, where Atom's 70mm times
+(11:45/15:30/19:15/23:00) match Harkins' own "IMAX" sessions exactly and its
+non-70mm times match the "Digital" ones.
+
+Costs **one Firecrawl credit per venue per day** -- Atom is Cloudflare-protected
+so a direct fetch 403s -- cached to midnight through the shared tier, and
+serialised with a gap because firing twelve at once returns 429. Slugs are
+hand-mapped on purpose: automated matching produced four confident mismatches
+(Regal LA Live -> "Live Oak", Carefree Circle -> "Tinseltown Colorado Springs",
+Museum of Discovery -> "Paradigm Cinemas", Celebration! -> "AMC Grand Rapids").
+
+Venues flagged `dedicatedImax` (single-screen museum houses) get NO attribute
+from Atom -- there is one screen, so nothing to disambiguate -- so their
+showings are included but `confirmed: false`.
+
 **With `only70mm=true` it lists a venue's actual 70mm showings**, which is real
 data rather than inference for two chains: AMC exposes an `IMAX70MM` attribute
 code (distinct from a plain `70MM` print -- both appear at Lincoln Square on the

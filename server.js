@@ -5,6 +5,7 @@ const { estimatedMinutesAway, prefilterMinutesAway, minutesToMeters } = require(
 const { getDriveMinutes, isConfigured: driveTimesConfigured } = require("./lib/drive-times");
 const priceModel = require("./lib/price-model");
 const { nearestImax70mm, IMAX_70MM_VENUES, isImax70mmRelease } = require("./lib/imax-70mm-venues");
+const { getAtomShowings: getAtom70mmShowings } = require("./lib/imax-atom");
 const { getVersion } = require("./lib/version");
 const { getPricedShowtimes, getTheaterSchedule } = require("./lib/priceAdapters/serpapi");
 const { resolveCanonicalLocation } = require("./lib/serpapi-location");
@@ -231,7 +232,7 @@ app.get("/api/imax-70mm", async (req, res) => {
             // shape and every Regal row rendered a blank time.
             .map((x) => ({ time: String(x.showTime || "").slice(11, 16) || x.showTime,
                            format: x.format, movieName: x.movieName, imax70mm: is70(x), confirmed: true }));
-        } else if (v.chain === "harkins" && v.chainCode) {
+        } else if (v.chain === "harkins" && v.chainCode && !v.atomSlug) {
           v.checked = true;
           // theatreId (British spelling) is Harkins' own field name, and it is
           // a NUMBER. Comparing against a missing chainCode previously made
@@ -250,11 +251,29 @@ app.get("/api/imax-70mm", async (req, res) => {
             .map((x) => ({ time: (x.showtimeOffset || "").slice(11, 16), format: x.format,
                            movieName: x.movieName || null, imax70mm: /imax/i.test(x.format || ""),
                            confirmed: false }));
+        } else if (v.atomSlug) {
+          // Everything our own adapters can't answer for -- Cinemark, the
+          // museums, the independents -- goes through Atom, which is the only
+          // source that tags a showing as IMAX70MM. One Firecrawl credit per
+          // venue per DAY, shared-cached, not per query.
+          const rows = await getAtom70mmShowings({ atomSlug: v.atomSlug, dateISO });
+          if (!rows) { v.showings = null; return; }
+          v.checked = true;
+          v.source = "atom";
+          const wanted = rows.filter((r) => !movie || matchesMovie(r.movieName, movie));
+          // A dedicated single-screen IMAX house has only the 15/70 projector,
+          // so Atom tags nothing -- there is nothing to disambiguate against.
+          // Filtering those to imax70mm would silently drop the venues most
+          // certain to be showing film. Included, but not claimed as confirmed.
+          const groups = only70mm && !v.dedicatedImax ? wanted.filter((r) => r.imax70mm) : wanted;
+          v.showings = groups.flatMap((r) => r.times.map((t) => ({
+            time: t, movieName: r.movieName, imax70mm: r.imax70mm,
+            // Atom states it outright when the attribute is there. Some pages
+            // (the Tennessee Aquarium's, for one) list the showing with no
+            // format tag at all -- those are reported without the claim.
+            confirmed: r.imax70mm && !v.dedicatedImax,
+          })));
         } else {
-          // Cinemark's showtimes API is movie-scoped rather than theater-scoped,
-          // and the 8 non-chain venues (museums, independents) have no adapter
-          // at all -- so those are reported as unchecked rather than as "no
-          // showings", which would be a different and wrong claim.
           v.showings = null;
         }
       } catch (err) {
