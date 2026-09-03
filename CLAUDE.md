@@ -80,6 +80,21 @@ while the same search with Regal off finished in 1.5s. Only GETs are pooled --
 on POST volume. Set `CAMOFOX_TAB_POOL=1` to restore the old single-tab
 behaviour.
 
+**The Camofox host runs with `BROWSER_IDLE_TIMEOUT_MS=0` (never kill the
+browser).** Its default is 300000 -- five idle minutes -- after which the
+browser is killed and cold-started on the next request. That cold start takes
+~52s while the server's own `HANDLER_TIMEOUT_MS` is 30s, so the first Regal
+action after any quiet spell was guaranteed to fail. Set as a systemd override
+(`systemctl edit camofox.service` -> `Environment=BROWSER_IDLE_TIMEOUT_MS=0`);
+fall back to `3600000` (1 hour) if a permanently-resident Firefox strains that
+box, which it has before (1.9G peak).
+
+**Do NOT raise `HANDLER_TIMEOUT_MS` above 35000.** It is env-configurable and
+tempting, but `server.js` hardcodes `TAB_LOCK_TIMEOUT_MS = 35000` with the
+comment "Must be > HANDLER_TIMEOUT_MS so active op times out first". Raising
+the handler timeout past that silently inverts the invariant. Verified by
+reading the published package, not the docs.
+
 A 5xx from `/tabs` gets **one retry after 25s** before counting as a failure.
 The host's own service log explains why: `launching camoufox` -> `tab create
 failed` exactly 30s later -> `camoufox launched` at ~52s. Its tab-create
