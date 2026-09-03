@@ -1995,7 +1995,7 @@
           ${opts.showMovieName ? `<div class="movie-name">${escapeHtml(r.movieName)}${r.runtimeMinutes ? ` <span class="runtime">(${r.runtimeMinutes} min)</span>` : ''}</div>
           ${ratingsHtml(r.ratings)}` : ''}
           <div class="card-top">
-            <span class="theater-name">${escapeHtml(r.theaterName)}</span>
+            <span class="theater-name">${escapeHtml(chainFirstName(r.theaterName))}</span>
             <span class="dist${searchedRadiusMin && r.distanceMin > searchedRadiusMin ? ' dist-over' : ''}"${
               searchedRadiusMin && r.distanceMin > searchedRadiusMin
                 ? ` title="Just outside your ${searchedRadiusMin}-minute radius. Kept because drive times are free-flow estimates with no traffic or parking, and a minute either way is inside that margin."`
@@ -2551,7 +2551,7 @@
     const overflowHtml = overflow.length
       ? Object.entries(overflowByTheater).map(([theater, showings]) =>
           `<div class="overflow-banner">
-            ${escapeHtml(theater)}: ${showings.length} more showing${showings.length === 1 ? '' : 's'} within your window &mdash;
+            ${escapeHtml(chainFirstName(theater))}: ${showings.length} more showing${showings.length === 1 ? '' : 's'} within your window &mdash;
             <button class="overflow-reveal-btn" onclick="window.showRegalOverflow(this, ${escapeHtml(JSON.stringify(showings)).replace(/"/g, '&quot;')})">Fetch prices &amp; show</button>
           </div>`
         ).join('')
@@ -2639,6 +2639,34 @@
   function truncate(str, maxLen) {
     if (!str || str.length <= maxLen) return str;
     return str.slice(0, maxLen).trim() + '...';
+  }
+
+  // Theater names arrive with the chain buried mid-string ("Universal Cinema
+  // AMC at CityWalk Hollywood & IMAX"), which makes a list of them hard to
+  // scan. Lead with the chain instead. DISPLAY ONLY -- the raw name is the
+  // lookup key for the IMAX 70mm panel (venues=/priceVenue=, and the
+  // follow-up merge), so never write the result back onto the data.
+  // Longest chain first, so "Alamo Drafthouse" wins over a bare "Alamo".
+  const NAME_CHAINS = ["Alamo Drafthouse", "Cinema West", "Cinemark", "Harkins", "Landmark", "Regency", "Regal", "Alamo", "AMC"];
+  function chainFirstName(name) {
+    const raw = String(name || "").trim();
+    if (!raw) return raw;
+    for (const chain of NAME_CHAINS) {
+      const re = new RegExp(`\\b${chain.replace(/ /g, "\\s+")}\\b`, "i");
+      const m = raw.match(re);
+      if (!m) continue;
+      if (m.index === 0) return raw;                 // already leads with the chain
+      const rest = raw
+        .replace(re, " ")
+        // "Universal Cinema - an AMC Theatre" leaves "- an Theatre" behind.
+        .replace(/[-\u2013,]?\s*\ban?\s+(Theatres?|Theaters?)\b/i, "")
+        .replace(/\s{2,}/g, " ")
+        .replace(/\s+([&\u00b7])\s*$/, "")
+        .replace(/^[\s\-\u2013,]+|[\s\-\u2013,]+$/g, "")
+        .trim();
+      return rest ? `${chain} ${rest}` : chain;
+    }
+    return raw;
   }
 
   function escapeHtml(str) {
@@ -2813,7 +2841,7 @@
       return `<div class="imax70-row"${v.priceError ? ` title="${escapeHtml(v.priceError)}"` : ''}>
           <div class="imax70-row-dist">${fmtDist(v.distanceMin)}</div>
           <div>
-            <div><b>${escapeHtml(v.name)}</b> &middot; ${escapeHtml(v.city)}, ${escapeHtml(v.state)}</div>
+            <div><b>${escapeHtml(chainFirstName(v.name))}</b> &middot; ${escapeHtml(v.city)}, ${escapeHtml(v.state)}</div>
             ${filmBlock}
             ${times ? `<div class="imax70-row-times">${times}</div>` : ''}
             ${v.seating ? `<div class="imax70-row-seats" title="${escapeHtml(v.seating.note || '')}">sit in row ${escapeHtml(v.seating.best)}</div>` : ''}
@@ -2867,7 +2895,7 @@
           failed.map((v) => `<div class="imax70-row">
               <div class="imax70-row-dist">${fmtDist(v.distanceMin)}</div>
               <div>
-                <div><b>${escapeHtml(v.name)}</b> &middot; ${escapeHtml(v.city)}, ${escapeHtml(v.state)}</div>
+                <div><b>${escapeHtml(chainFirstName(v.name))}</b> &middot; ${escapeHtml(v.city)}, ${escapeHtml(v.state)}</div>
                 <div class="imax70-row-times" style="color:var(--warn);">${escapeHtml(v.error)}${v.retryable ? ' (temporary)' : ''}</div>
               </div>
             </div>`).join('')
@@ -2883,7 +2911,7 @@
               <div class="imax70-row-dist">${fmtDist(v.distanceMin)}</div>
               <div>
                 <div><label style="cursor:pointer;"><input type="checkbox" class="imax70-pick" value="${escapeHtml(v.name)}" style="margin-right:6px;">` +
-                `<b>${escapeHtml(v.name)}</b> &middot; ${escapeHtml(v.city)}, ${escapeHtml(v.state)}</label></div>
+                `<b>${escapeHtml(chainFirstName(v.name))}</b> &middot; ${escapeHtml(v.city)}, ${escapeHtml(v.state)}</label></div>
                 ${v.seating ? `<div class="imax70-row-seats" title="${escapeHtml(v.seating.note || '')}">sit in row ${escapeHtml(v.seating.best)}</div>` : ''}
               </div>
             </div>`).join('') +
