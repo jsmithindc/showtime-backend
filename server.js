@@ -47,6 +47,7 @@ const CINEMAWEST_THEATER_MAP = require("./lib/cinemawest-theater-map");
 const { getShowtimesForSite: getCinemaWestShowtimes, getTicketPricing: getCinemaWestTicketPricing, getFreshTokenCached: getCinemaWestFreshToken } = require("./lib/priceAdapters/cinemawest-official");
 const { getHarkinsTheaters } = require("./lib/harkins-theaters");
 const { getShowtimesForCinema: getCelebrationShowtimes } = require("./lib/priceAdapters/celebration-official");
+const { getShowtimesForSite: getBrendenShowtimes } = require("./lib/priceAdapters/brenden-official");
 const { getShowtimes: getAppleShowtimes, getTicketPricing: getAppleTicketPricing } = require("./lib/priceAdapters/applecinemas-official");
 const APPLECINEMAS_MOVIE_MAP = require("./lib/applecinemas-movie-map");
 const { getMovieCatalog: getHarkinsMovieCatalog, getShowtimesForMovie: getHarkinsShowtimesForMovie, getTicketPricing: getHarkinsTicketPricing, getRuntimeForMovie: getHarkinsRuntimeForMovie } = require("./lib/priceAdapters/harkins-official");
@@ -360,6 +361,28 @@ app.get("/api/imax-70mm", async (req, res) => {
               // Carried so priceVenue can price without re-fetching the schedule.
               priceCardId: x.priceCardId,
               buyUrl: `https://www.applecinemas.com/home/${v.chainCode}`,
+            }));
+        } else if (v.chain === "brenden" && v.chainSlug) {
+          // Brenden lists its 70mm run as a separate FILM ("The Odyssey - The
+          // IMAX 70mm Experience") alongside the standard one, so the print is
+          // read from the title rather than a session attribute -- and the two
+          // must not be conflated. Confirmed on a real page: 12:00/16:00/20:00
+          // for the 70mm entry, 14:00 for the plain one.
+          const rows = await getBrendenShowtimes({ site: v.chainSlug, dateISO });
+          v.checked = true;
+          v.showings = rows
+            .filter((x) => !movie || matchesMovie(x.movieName, movie))
+            .filter((x) => !only70mm || x.imax70mm)
+            .map((x) => ({
+              time: x.time,
+              format: x.imax70mm ? "IMAX 70mm" : null,
+              movieName: x.movieName,
+              imax70mm: x.imax70mm,
+              confirmed: x.imax70mm,   // the chain names the presentation itself
+              // No price: pricing lives behind /checkout, which their
+              // robots.txt disallows. The link is offered, never fetched.
+              price: null,
+              buyUrl: x.buyUrl,
             }));
         } else if (v.atomSlug) {
           // Everything our own adapters can't answer for -- Cinemark, the
