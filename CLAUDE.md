@@ -290,6 +290,13 @@ adapter. Validated against Harkins Arizona Mills, where Atom's 70mm times
 (11:45/15:30/19:15/23:00) match Harkins' own "IMAX" sessions exactly and its
 non-70mm times match the "Digital" ones.
 
+**Only venues within `maxMiles` (default 200) are queried for showtimes.**
+Everything else is still listed with its distance -- just not looked up, since
+a theater 1,500 miles away is not a showing anyone is driving to and each one
+costs a real credit. From Denver that is 2 lookups instead of 25, and 4.4s
+instead of minutes. The UI offers a button naming how many venues were skipped;
+`maxMiles=all` lifts the cap.
+
 Costs **one Firecrawl credit per venue per day** -- Atom is Cloudflare-protected
 so a direct fetch 403s -- cached to midnight through the shared tier, and
 serialised with a gap because firing twelve at once returns 429. Slugs are

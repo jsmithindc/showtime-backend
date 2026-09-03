@@ -183,6 +183,13 @@ app.get("/api/imax-70mm", async (req, res) => {
   // for one film. AMC exposes an IMAX70MM attribute code and Regal spells it
   // in the format string, so this is real data, not an inference.
   const only70mm = req.query.only70mm === "true";
+  // Showtime lookups cost something real -- a Firecrawl credit per Atom venue,
+  // an API call per chain venue -- and a theater 1,500 miles away is not a
+  // showing anyone is driving to. Venues beyond this are still LISTED with
+  // their distance; they just aren't queried. The UI offers a button to widen
+  // it, because "nearest 70mm screen" and "I will fly for this" are both real
+  // questions and only the first is the common one.
+  const maxMiles = req.query.maxMiles === "all" ? Infinity : (Number(req.query.maxMiles) || 200);
   const originLat = Number(lat), originLng = Number(lng);
   if (!Number.isFinite(originLat) || !Number.isFinite(originLng)) {
     return res.status(400).json({ error: "lat and lng are required" });
@@ -195,7 +202,15 @@ app.get("/api/imax-70mm", async (req, res) => {
       originLat, originLng, limit: IMAX_70MM_VENUES.length, getDriveMinutes,
     });
 
-    if (!movie && !only70mm) return res.json({ dateISO, movie: null, venues });
+    // Same response shape as the lookup path, even though nothing was queried
+    // here -- a caller shouldn't have to know which branch answered it.
+    if (!movie && !only70mm) {
+      return res.json({
+        dateISO, movie: null,
+        maxMiles: maxMiles === Infinity ? "all" : maxMiles,
+        skippedFar: 0, venues,
+      });
+    }
 
     // Film-specific: ask the chains we have adapters for whether that title is
     // playing at each venue. Harkins answers nationwide in ONE call, so it is
@@ -206,6 +221,7 @@ app.get("/api/imax-70mm", async (req, res) => {
 
     await Promise.all(venues.map((v) => priceLimit(async () => {
       v.checked = false;
+      if (v.distanceMi > maxMiles) { v.tooFar = true; v.showings = null; return; }
       try {
         if (v.chain === "amc" && v.chainCode) {
           const st = await getAmcShowtimesForTheater({ theatreId: v.chainCode, dateISO });
@@ -283,12 +299,14 @@ app.get("/api/imax-70mm", async (req, res) => {
     })));
 
     const withFilm = venues.filter((v) => v.showings && v.showings.length);
+    const skippedFar = venues.filter((v) => v.tooFar).length;
     console.error(
-      `IMAX 70mm lookup for "${movie}": ${venues.length} venue(s), ` +
-      `${venues.filter((v) => v.checked).length} checked, ${withFilm.length} showing it` +
+      `IMAX 70mm lookup${movie ? ` for "${movie}"` : ""}: ${venues.length} venue(s), ` +
+      `${venues.filter((v) => v.checked).length} checked, ${withFilm.length} with showings` +
+      (skippedFar ? `, ${skippedFar} beyond ${maxMiles}mi not queried` : "") +
       (withFilm.length ? ` (nearest: ${withFilm[0].name}, ${withFilm[0].distanceMin}min)` : "")
     );
-    res.json({ dateISO, movie, venues });
+    res.json({ dateISO, movie, maxMiles: maxMiles === Infinity ? "all" : maxMiles, skippedFar, venues });
   } catch (err) {
     console.error("IMAX 70mm lookup failed:", err.message);
     res.status(500).json({ error: err.message });

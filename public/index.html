@@ -2697,7 +2697,7 @@
   // One question: what 15/70 screens are near me, and what is actually playing
   // on them today. Ignores the search radius on purpose -- someone asking will
   // drive further than for an ordinary showing.
-  async function loadImax70() {
+  async function loadImax70(maxMiles) {
     els.imax70Body.innerHTML = '<div style="font-size:12px; color:var(--ink-dim);">Looking up 70mm IMAX venues&hellip;</div>';
     els.searchBtn.disabled = true;
     try {
@@ -2710,6 +2710,7 @@
         lat = geo.lat; lng = geo.lng;
       }
       const params = new URLSearchParams({ lat, lng, only70mm: 'true' });
+      if (maxMiles) params.set('maxMiles', maxMiles);
       if (els.searchDate && els.searchDate.value) params.set('date', els.searchDate.value);
       const data = await fetch(`/api/imax-70mm?${params}`).then((r) => r.json());
       if (data.error) throw new Error(data.error);
@@ -2757,10 +2758,22 @@
       (rest.length
         ? `<div class="status-line" style="margin-top:14px;">Other 15/70 screens, nearest first:</div>` + rest.map(row).join('')
         : '') +
+      // Only offered when something was actually skipped, and it says how many
+      // -- a bare "search further" button gives no sense of whether it is worth
+      // the wait, and each of those venues costs a real lookup.
+      (data.skippedFar
+        ? `<div style="margin-top:12px;"><button class="locate-btn" id="imax70WidenBtn" type="button">` +
+          `Also check ${data.skippedFar} venue${data.skippedFar === 1 ? '' : 's'} further than ${data.maxMiles} miles</button></div>`
+        : '') +
       `<div class="imax70-foot">True 15/70 film projection &mdash; not the digital IMAX in the format filter. ` +
-      `Distances ignore any radius. Showtimes checkable at ${checked} of ${venues.length} venues; ` +
-      `Cinemark's feed is movie-scoped and the museum venues have no adapter. ` +
-      `* = reported as IMAX without confirming 70mm.</div>`;
+      (data.skippedFar
+        ? `Showtimes looked up within ${data.maxMiles} miles; venues beyond that are listed but not queried. `
+        : `Distances ignore any radius. `) +
+      `Checked ${checked} of ${venues.length} venues. ` +
+      `* = venue has a single IMAX screen, so the showing is almost certainly the film print, but Atom doesn't say so.</div>`;
+
+    const widen = document.getElementById('imax70WidenBtn');
+    if (widen) widen.addEventListener('click', () => { widen.disabled = true; widen.textContent = 'Checking\u2026'; loadImax70('all'); });
   }
 
   els.searchBtn.addEventListener('click', runCurrentModeSearch);
