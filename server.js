@@ -247,6 +247,7 @@ app.get("/api/imax-70mm", async (req, res) => {
             .map((x) => ({ time: x.time, format: x.format, movieName: x.movieName,
                            imax70mm: (x.attributeCodes || []).includes("IMAX70MM"), confirmed: true,
                            price: x.price ?? null, priceBeforeFee: x.priceBeforeFee ?? null,
+                           runtimeMinutes: x.runTime ?? null,
                            buyUrl: x.purchaseUrl || null }));
         } else if (v.chain === "regal" && v.chainCode) {
           // costTracker is required, not optional -- omitting it threw
@@ -371,6 +372,35 @@ app.get("/api/imax-70mm", async (req, res) => {
       }
     }
 
+    // Film details for whatever turned up -- poster, year, runtime, scores --
+    // the same things the free-time search shows on a card. Cheap because a
+    // 70mm lookup surfaces one or two titles, not a whole listing, and both
+    // lookups are cached.
+    const filmNames = [...new Set(
+      venues.flatMap((v) => (v.showings || []).map((sh) => sh.movieName)).filter(Boolean)
+    )];
+    const films = {};
+    await Promise.all(filmNames.map(async (name) => {
+      // Runtime: AMC ships it on every showtime, so prefer that (free) and
+      // only ask the catalog when no AMC venue happened to carry the film.
+      const fromShowing = venues
+        .flatMap((v) => v.showings || [])
+        .find((sh) => sh.movieName === name && sh.runtimeMinutes);
+      const [ratings, runtime] = await Promise.all([
+        getMovieRatings(name, Number(dateISO.slice(0, 4))).catch(() => null),
+        fromShowing
+          ? Promise.resolve(fromShowing.runtimeMinutes)
+          : getAmcRuntimeFromCatalog(name, dateISO).catch(() => null),
+      ]);
+      films[name] = {
+        title: name,
+        runtimeMinutes: runtime ?? null,
+        year: ratings && ratings.year ? ratings.year : null,
+        poster: ratings && ratings.poster ? ratings.poster : null,
+        ratings: ratings || null,
+      };
+    }));
+
     const withFilm = venues.filter((v) => v.showings && v.showings.length);
     const skippedFar = venues.filter((v) => v.tooFar).length;
     console.error(
@@ -379,7 +409,7 @@ app.get("/api/imax-70mm", async (req, res) => {
       (skippedFar ? `, ${skippedFar} beyond ${maxMiles}mi not queried` : "") +
       (withFilm.length ? ` (nearest: ${withFilm[0].name}, ${withFilm[0].distanceMin}min)` : "")
     );
-    res.json({ dateISO, movie, maxMiles: maxMiles === Infinity ? "all" : maxMiles, skippedFar, venues });
+    res.json({ dateISO, movie, maxMiles: maxMiles === Infinity ? "all" : maxMiles, skippedFar, films, venues });
   } catch (err) {
     console.error("IMAX 70mm lookup failed:", err.message);
     res.status(500).json({ error: err.message });

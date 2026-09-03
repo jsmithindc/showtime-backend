@@ -290,6 +290,12 @@ adapter. Validated against Harkins Arizona Mills, where Atom's 70mm times
 (11:45/15:30/19:15/23:00) match Harkins' own "IMAX" sessions exactly and its
 non-70mm times match the "Digital" ones.
 
+A film that turns up gets the same treatment as a free-time search card --
+poster, year, runtime and scores -- returned in the response's `films` map.
+Runtime comes free from AMC's showtimes (it ships `runTime` on every showing)
+and only falls back to the AMC runtime catalog when no AMC venue happens to
+carry the film; poster/year/scores come from the cached ratings lookup.
+
 The panel lists far venues for free with checkboxes, then `venues=<names>`
 looks up only the ones picked (at any distance -- an explicit pick overrides
 the distance gate), and `priceVenue=<name>` runs real pricing for one venue.

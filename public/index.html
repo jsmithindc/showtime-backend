@@ -524,6 +524,11 @@
   .imax70-row b { color: var(--ink); }
   .imax70-row-times { margin-top: 2px; font-size: 11px; color: var(--ink-dim); }
   .imax70-row-seats { margin-top: 2px; font-size: 11px; color: var(--best); cursor: help; }
+  .imax70-film { display: flex; gap: 9px; align-items: flex-start; margin: 5px 0 4px; }
+  .imax70-poster { width: 42px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 3px; background: var(--marquee-3); flex: none; }
+  .imax70-film-title { font-weight: 700; color: var(--ink); font-size: 12px; }
+  .imax70-film-meta { font-size: 11px; color: var(--ink-dim); margin-top: 1px; }
+  .imax70-film .ratings { margin: 3px 0 0; }
   .imax70-price { color: var(--stubs-amt); font-weight: 700; }
   .imax70-buy { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--stub-line); }
   .imax70-buy:hover { color: var(--gold); }
@@ -2753,12 +2758,27 @@
           ? `<a href="${escapeHtml(sh.buyUrl)}" target="_blank" rel="noopener" class="imax70-buy">${label}</a>`
           : label;
       }).join(' &middot; ');
-      const films = [...new Set((v.showings || []).map((sh) => sh.movieName).filter(Boolean))];
+      const filmNames = [...new Set((v.showings || []).map((sh) => sh.movieName).filter(Boolean))];
+      // Same details the free-time search puts on a card: poster, year,
+      // runtime, scores. Shown once per venue rather than once per showtime,
+      // because a 70mm run is usually one film with several times.
+      const filmBlock = filmNames.map((n) => {
+        const f = (data.films || {})[n] || {};
+        const meta = [f.year, f.runtimeMinutes ? fmtRuntime(f.runtimeMinutes) : null].filter(Boolean).join(' \u00b7 ');
+        return `<div class="imax70-film">
+            ${f.poster ? `<img class="imax70-poster" src="${escapeHtml(f.poster)}" alt="${escapeHtml(n)} poster" loading="lazy" onerror="this.remove()">` : ''}
+            <div>
+              <div class="imax70-film-title">${escapeHtml(n)}</div>
+              ${meta ? `<div class="imax70-film-meta">${escapeHtml(meta)}</div>` : ''}
+              ${f.ratings ? ratingsHtml(f.ratings) : ''}
+            </div>
+          </div>`;
+      }).join('');
       return `<div class="imax70-row">
           <div class="imax70-row-dist">${fmtDist(v.distanceMin)}</div>
           <div>
             <div><b>${escapeHtml(v.name)}</b> &middot; ${escapeHtml(v.city)}, ${escapeHtml(v.state)}</div>
-            ${films.length ? `<div class="imax70-row-times">${escapeHtml(films.join(', '))}</div>` : ''}
+            ${filmBlock}
             ${times ? `<div class="imax70-row-times">${times}</div>` : ''}
             ${v.seating ? `<div class="imax70-row-seats" title="${escapeHtml(v.seating.note || '')}">sit in row ${escapeHtml(v.seating.best)}</div>` : ''}
             ${(v.showings && v.showings.length && v.showings.every((sh) => sh.price == null) && v.chain === 'regal')
