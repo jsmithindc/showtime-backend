@@ -534,18 +534,39 @@ the point, and a matching ZIP is strong confirmation.
 
 ## Serving path
 
-The app is mounted at **both `/` and `/showtimefinder`** (`app.use("/showtimefinder",
-express.static("public"))`), so a custom domain pointed at this Render service
-answers on `example.com/showtimefinder` as well as the root. No proxy, no
-`<base>` tag and no frontend change is needed for this, because the API is
-mounted at the ROOT of the same service -- `index.html`'s eight
-`fetch("/api/...")` calls resolve to this app whichever path served the page.
-Root stays mounted deliberately: dropping it would break Render's health check
-and any existing link, and costs nothing to keep.
+The app runs on its **own hostname**, `showtimefinder.jmvarghe.vip` (a custom
+domain on the Render service), serving from `/` with the API beside it at
+`/api/...`. Nothing else shares that host, so there is no namespace to defend.
 
-That only holds while the whole domain points here. If the root is ever needed
-for something else, the path prefix has to move to a real reverse proxy in
-front, and the frontend's `/api/...` calls become prefix-relative at that point.
+It was briefly mounted at `/showtimefinder` on the apex instead. That was
+dropped once the apex was earmarked for an unrelated site, and the reasoning is
+worth keeping, because the pull toward a tidy path is real:
+
+- **A custom domain is a hostname, not a URL.** `jmvarghe.vip/showtimefinder`
+  cannot be a custom domain anywhere — DNS has no concept of paths, and TLS
+  certificates are issued per hostname. The path only exists after a connection
+  has already been made to whatever the hostname resolved to.
+- So path routing across two origins needs a reverse proxy in front of both
+  (Cloudflare being the free option). A subdomain needs none.
+- Sharing the apex would also force `/api/...` down to `/showtimefinder/api/...`
+  — ten routes plus eight `fetch` call sites in `public/index.html` — because
+  the site owning the apex owns `/api` too, and the collision would be silent.
+
+Paths only earn that cost when the pieces read as one site. Unrelated projects
+on one domain belong on separate hostnames: independent deploys, no proxy in
+the request path, and a per-hostname certificate each platform renews itself.
+
+Consequence for the code: `public/index.html`'s `fetch("/api/...")` calls are
+root-absolute and can stay that way. If the app is ever put back behind a path
+prefix, those become prefix-relative and the API mount has to move with them.
+
+**SSE and idle proxies.** `lib/sse-keepalive.js` writes an SSE comment
+(`: ping`) every 20s on the two long-lived streams. Cloudflare drops a
+connection whose origin has been quiet for 100 seconds, and this app has been
+measured at 124.7s with `first Regal` at 86.6s — so the silence is real, and
+the failure would be a search dying mid-flight rather than erroring. A `:` line
+is a comment per the SSE spec, so no client can mistake it for an event. The
+other three `flushHeaders()` sites are immediate-exit paths and need nothing.
 
 ## Known gotchas before touching related code
 

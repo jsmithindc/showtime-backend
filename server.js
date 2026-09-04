@@ -45,6 +45,7 @@ const CINEMARK_THEATER_MAP = require("./lib/cinemark-theater-map");
 const CINEMARK_MOVIE_MAP = require("./lib/cinemark-movie-map");
 const CINEMAWEST_THEATER_MAP = require("./lib/cinemawest-theater-map");
 const { getShowtimesForSite: getCinemaWestShowtimes, getTicketPricing: getCinemaWestTicketPricing, getFreshTokenCached: getCinemaWestFreshToken } = require("./lib/priceAdapters/cinemawest-official");
+const { keepSseAlive } = require("./lib/sse-keepalive");
 const { getHarkinsTheaters } = require("./lib/harkins-theaters");
 const { getShowtimesForCinema: getCelebrationShowtimes } = require("./lib/priceAdapters/celebration-official");
 const {
@@ -166,15 +167,16 @@ app.use(compression({
   },
 }));
 
+// The app owns its whole hostname (showtimefinder.jmvarghe.vip), so it serves
+// from the root and the API sits beside it at /api/... with nothing else on
+// that host to collide with.
+//
+// It was briefly mounted at /showtimefinder on the apex instead. A subdomain
+// is the better shape once the apex belongs to an unrelated site: no reverse
+// proxy in the request path, no shared /api namespace to defend, independent
+// deploys, and a per-hostname certificate each platform manages itself. Paths
+// only earn their cost when the pieces read as one site.
 app.use(express.static("public"));
-
-// Also served under a path prefix, so the app can live at
-// example.com/showtimefinder rather than only at the domain root. This works
-// without touching the frontend because the API is mounted at the ROOT of the
-// same service: index.html's fetch("/api/...") calls resolve to this app
-// whichever path served the page. Root stays mounted too -- removing it would
-// break Render's health check and any existing bookmark, and costs nothing.
-app.use("/showtimefinder", express.static("public"));
 
 // Served rather than hand-typed into the HTML. The badge's only job is to say
 // what is actually deployed, and a number someone has to remember to edit
@@ -1567,6 +1569,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
+  keepSseAlive(res);
 
   function sseWrite(eventName, data) {
     if (aborted || res.writableEnded) return;
@@ -4141,6 +4144,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
+    keepSseAlive(res);
 
     function sseWrite(eventName, data) {
       if (aborted || res.writableEnded) return;
