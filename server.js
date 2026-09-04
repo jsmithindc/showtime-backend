@@ -208,6 +208,26 @@ app.use(compression({
 // only earn their cost when the pieces read as one site.
 app.use(express.static("public"));
 
+// Render og-image.svg → PNG on first request, cache in memory.
+// iMessage's LinkPresentation framework only previews PNG/JPEG og:image.
+let _ogImagePng = null;
+app.get("/og-image.png", async (req, res) => {
+  try {
+    if (!_ogImagePng) {
+      const { Resvg } = require("@resvg/resvg-js");
+      const svg = require("fs").readFileSync(
+        require("path").join(__dirname, "public", "og-image.svg")
+      );
+      _ogImagePng = new Resvg(svg, { fitTo: { mode: "width", value: 1200 } }).render().asPng();
+    }
+    res.set("Content-Type", "image/png");
+    res.set("Cache-Control", "public, max-age=86400");
+    res.send(_ogImagePng);
+  } catch (e) {
+    res.status(500).send("could not render og image");
+  }
+});
+
 // Served rather than hand-typed into the HTML. The badge's only job is to say
 // what is actually deployed, and a number someone has to remember to edit
 // stops doing that the first time it is forgotten -- see lib/version.js.
