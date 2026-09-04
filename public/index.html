@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- Belt and braces with public/robots.txt: robots.txt asks crawlers not to
+     FETCH, this asks them not to INDEX if they arrive by a shared link a
+     crawler happened to see. Neither affects a friend opening the URL. -->
+<meta name="robots" content="noindex, nofollow" />
 <title>Showtime Finder</title>
 <style>
   :root {

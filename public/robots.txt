@@ -1,0 +1,9 @@
+# Shareable by link, not by search. This app spends real money per search --
+# SerpApi, Firecrawl credits, Geoapify, OMDb -- so being indexed means
+# strangers spending it. Friends with the link are unaffected by this file.
+#
+# There is no password gate, deliberately: the whole point is that a link is
+# all a friend needs. Staying out of the index is what makes that safe, and
+# the per-IP limiter in server.js caps whatever still finds its way here.
+User-agent: *
+Disallow: /
