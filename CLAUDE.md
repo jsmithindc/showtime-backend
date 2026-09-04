@@ -637,6 +637,19 @@ other three `flushHeaders()` sites are immediate-exit paths and need nothing.
   refuses to answer when more than one candidate survives, since guessing which
   of several unnamed types is the adult one would put a wrong number in
   `price`, which by design means "read from the chain".
+- **Brenden's showtimes page ignores the date; its API does not.** Caught in
+  production within minutes of deploying. `/{site}/showtimes` always returns
+  the venue's own "today", while `showingsForDate(date:)` honours whatever date
+  it is given. **Render runs in UTC**, so from 17:00 Pacific onward the
+  server's date is already tomorrow at a Nevada venue -- the showings came from
+  one day and the price context from the next, matched nothing, and pricing
+  failed with "no sellable ticket types". Local testing hid it because the
+  venue's date was passed by hand. `getTicketPricing` now falls back to
+  `getShowingById`, which asks about one showing directly: a showing carries
+  its own price card and ticket types regardless of which day you ask about, so
+  the mismatch is sidestepped rather than guessed at. Worth remembering more
+  generally -- **the server's date is not the venue's date**, and any adapter
+  pairing a date-less page with a date-scoped API has this bug latent in it.
 - **Distance-only theater matching is fragile in dense areas.** Both the
   Regal and AMC auto-match logic (matching an unmapped OSM theater to a
   known chain-ID list purely by lat/lng proximity) previously mismatched
