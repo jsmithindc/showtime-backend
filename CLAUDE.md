@@ -707,6 +707,27 @@ other three `flushHeaders()` sites are immediate-exit paths and need nothing.
   or shared-cached, and the frontend calls them on every page load.
   Counts are **in-memory**, so they reset on redeploy and are per-instance;
   Upstash is already wired up if that ever needs to be shared.
+- **There is deliberately NO password.** The point of this app is that a friend
+  can use it straight from a link, so `APP_PASSWORD` (still present, still
+  works) is left unset on purpose. Protection is layered instead, and each
+  layer is inert until its env var is set:
+  - `public/robots.txt` + a `noindex` meta keep it out of search results, which
+    is most of the real-world risk now that it lives on a clean, guessable
+    hostname rather than an unlinked `onrender.com` URL.
+  - **`ACCESS_KEY`** (`lib/access-gate.js`) makes it invite-only by
+    **capability link** — share `?k=<ACCESS_KEY>` once, a cookie remembers it,
+    and the key is stripped from the URL by a redirect so it doesn't linger in
+    history or get pasted onward. The cookie stores a HASH, so rotating
+    `ACCESS_KEY` silently expires everyone. `/robots.txt` is exempt on purpose:
+    RFC 9309 says a 4xx there lets a crawler assume NO restrictions, so gating
+    it would invert its meaning.
+  - **`DAILY_SEARCH_BUDGET`** (default 1000, `0` disables) caps TOTAL searches
+    per day across everyone, resetting at local midnight. The per-IP limiter
+    caps one visitor and cannot cap a hundred of them; this is the layer that
+    still holds if a link leaks. It answers **503**, not the per-IP limiter's
+    429, so the logs distinguish a service ceiling from a per-caller verdict.
+    It runs AFTER the per-IP limiter so a request already refused for one
+    visitor never eats the shared pool.
 - **`APP_PASSWORD` is a real, functioning access gate** (`server.js`
   line ~46-70s), not decorative — set it before exposing this past
   localhost (e.g. via a tunnel or Railway) or anyone with the URL can burn

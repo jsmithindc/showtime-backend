@@ -46,6 +46,7 @@ const CINEMARK_MOVIE_MAP = require("./lib/cinemark-movie-map");
 const CINEMAWEST_THEATER_MAP = require("./lib/cinemawest-theater-map");
 const { getShowtimesForSite: getCinemaWestShowtimes, getTicketPricing: getCinemaWestTicketPricing, getFreshTokenCached: getCinemaWestFreshToken } = require("./lib/priceAdapters/cinemawest-official");
 const { keepSseAlive } = require("./lib/sse-keepalive");
+const { createAccessGate, createDailyBudget } = require("./lib/access-gate");
 const { getHarkinsTheaters } = require("./lib/harkins-theaters");
 const { getShowtimesForCinema: getCelebrationShowtimes } = require("./lib/priceAdapters/celebration-official");
 const {
@@ -111,6 +112,26 @@ if (APP_PASSWORD) {
 } else {
   console.error("APP_PASSWORD is not set -- running with no login gate (fine for localhost-only use).");
 }
+
+// Invite-only by capability link, when ACCESS_KEY is set. Deliberately NOT a
+// password: the point of this app is that a friend can use it straight from a
+// link, so the secret rides along in the link they were already being sent and
+// a cookie remembers it afterwards. Unset, this is a no-op and the app is open.
+//
+// Share: https://showtimefinder.jmvarghe.vip/?k=<ACCESS_KEY>
+// Rotating ACCESS_KEY silently expires every existing cookie -- re-share once.
+app.use(createAccessGate({ key: process.env.ACCESS_KEY }));
+
+// A ceiling on TOTAL searches per day, whoever is asking. searchRateLimiter
+// below caps one visitor; it cannot cap a hundred of them, or one visitor on a
+// hundred addresses. Set DAILY_SEARCH_BUDGET=0 to lift it entirely.
+const dailySearchBudget = createDailyBudget({
+  limit: process.env.DAILY_SEARCH_BUDGET === undefined ? 1000 : Number(process.env.DAILY_SEARCH_BUDGET),
+  onTrip: ({ used, limit, resetsAt }) => console.error(
+    `Daily search budget reached -- ${used}/${limit} searches, resets ${new Date(resetsAt).toISOString()}. ` +
+    `Raise DAILY_SEARCH_BUDGET if this was legitimate traffic.`
+  ),
+});
 
 // Alternative/complementary protection to the password gate: a per-IP
 // daily cap on the actual credit-costing endpoints (search, movies,
@@ -212,7 +233,7 @@ async function getHarkinsAllForVenue(venue, dateISO) {
   return out;
 }
 
-app.get("/api/imax-70mm", searchRateLimiter, async (req, res) => {
+app.get("/api/imax-70mm", searchRateLimiter, dailySearchBudget, async (req, res) => {
   const { lat, lng, movie, date } = req.query;
   // only70mm: list the venue's actual IMAX 70mm showings rather than checking
   // for one film. AMC exposes an IMAX70MM attribute code and Regal spells it
@@ -1468,7 +1489,7 @@ async function applyRealDriveTimes({ originLat, originLng, radiusMin, lists }) {
   );
 }
 
-app.get("/api/search", searchRateLimiter, async (req, res) => {
+app.get("/api/search", searchRateLimiter, dailySearchBudget, async (req, res) => {
   const { movie, radiusMin, deadline, formats, chains, date, clientTime, debug, debugSerpApi } = req.query;
   let { lat, lng, location, place } = req.query;
 
@@ -3543,7 +3564,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 // parallel. Without this, both backend calls geocode the same place
 // simultaneously, racing to Nominatim and triggering 429s on Render's
 // shared datacenter IP range even though one call would have been enough.
-app.get("/api/geocode", searchRateLimiter, async (req, res) => {
+app.get("/api/geocode", searchRateLimiter, dailySearchBudget, async (req, res) => {
   const { place } = req.query;
   if (!place) return res.status(400).json({ error: "place is required" });
   try {
@@ -3917,7 +3938,7 @@ app.get("/api/movies", async (req, res) => {
 // (geocoding, theater discovery, runtime lookup) rather than sharing
 // code with the main handler, to avoid any risk of destabilizing the
 // working main endpoint while extracting this.
-app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
+app.get("/api/search-regal", searchRateLimiter, dailySearchBudget, async (req, res) => {
   const { movie, radiusMin, deadline, formats, date, clientTime } = req.query;
   let { lat, lng, location, place } = req.query;
 
@@ -4378,7 +4399,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
 // On-demand pricing for a single Regal performance -- used by the
 // frontend's overflow "Show them" path to fetch a real ticket price
 // for showings that were beyond the per-theater cap during the main search.
-app.get("/api/price-regal-showing", searchRateLimiter, async (req, res) => {
+app.get("/api/price-regal-showing", searchRateLimiter, dailySearchBudget, async (req, res) => {
   const { cinemaCode, performanceId, movieId, movie, dateISO, startTime, format } = req.query;
   if (!cinemaCode || !performanceId || !movie || !dateISO) {
     return res.status(400).json({ error: "cinemaCode, performanceId, movie, and dateISO are required" });
@@ -4430,7 +4451,7 @@ app.get("/api/price-regal-showing", searchRateLimiter, async (req, res) => {
   }
 });
 
-app.get("/api/window-search", searchRateLimiter, async (req, res) => {
+app.get("/api/window-search", searchRateLimiter, dailySearchBudget, async (req, res) => {
   const { radiusMin, date, availableFrom, availableUntil, formats } = req.query;
   let { lat, lng, location, place } = req.query;
 
