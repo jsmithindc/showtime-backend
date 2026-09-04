@@ -47,7 +47,10 @@ const CINEMAWEST_THEATER_MAP = require("./lib/cinemawest-theater-map");
 const { getShowtimesForSite: getCinemaWestShowtimes, getTicketPricing: getCinemaWestTicketPricing, getFreshTokenCached: getCinemaWestFreshToken } = require("./lib/priceAdapters/cinemawest-official");
 const { getHarkinsTheaters } = require("./lib/harkins-theaters");
 const { getShowtimesForCinema: getCelebrationShowtimes } = require("./lib/priceAdapters/celebration-official");
-const { getShowtimesForSite: getBrendenShowtimes } = require("./lib/priceAdapters/brenden-official");
+const {
+  getShowtimesForSite: getBrendenShowtimes,
+  getTicketPricing: getBrendenTicketPricing,
+} = require("./lib/priceAdapters/brenden-official");
 const { getShowtimes: getAppleShowtimes, getTicketPricing: getAppleTicketPricing } = require("./lib/priceAdapters/applecinemas-official");
 const APPLECINEMAS_MOVIE_MAP = require("./lib/applecinemas-movie-map");
 const { getMovieCatalog: getHarkinsMovieCatalog, getShowtimesForMovie: getHarkinsShowtimesForMovie, getTicketPricing: getHarkinsTicketPricing, getRuntimeForMovie: getHarkinsRuntimeForMovie } = require("./lib/priceAdapters/harkins-official");
@@ -164,6 +167,14 @@ app.use(compression({
 }));
 
 app.use(express.static("public"));
+
+// Also served under a path prefix, so the app can live at
+// example.com/showtimefinder rather than only at the domain root. This works
+// without touching the frontend because the API is mounted at the ROOT of the
+// same service: index.html's fetch("/api/...") calls resolve to this app
+// whichever path served the page. Root stays mounted too -- removing it would
+// break Render's health check and any existing bookmark, and costs nothing.
+app.use("/showtimefinder", express.static("public"));
 
 // Served rather than hand-typed into the HTML. The badge's only job is to say
 // what is actually deployed, and a number someone has to remember to edit
@@ -379,9 +390,9 @@ app.get("/api/imax-70mm", async (req, res) => {
               movieName: x.movieName,
               imax70mm: x.imax70mm,
               confirmed: x.imax70mm,   // the chain names the presentation itself
-              // No price: pricing lives behind /checkout, which their
-              // robots.txt disallows. The link is offered, never fetched.
               price: null,
+              // Carried so priceVenue can price without re-parsing the page.
+              showingId: x.showingId,
               buyUrl: x.buyUrl,
             }));
         } else if (v.atomSlug) {
@@ -516,6 +527,53 @@ app.get("/api/imax-70mm", async (req, res) => {
           if (!pricedCount) {
             if (firstErr) throw firstErr;
             throw new Error("Apple Cinemas returned no price card for these showings");
+          }
+        } catch (err) {
+          target.priceError = err.message;
+          console.error(`IMAX 70mm: pricing ${priceVenue} failed:`, err.message);
+        }
+      } else if (target && target.chain === "brenden" && target.chainSlug && target.showings && target.showings.length) {
+        try {
+          // Every showing at this venue prices off the SAME two cached
+          // requests (the site's price cards and the day's showing list), so
+          // this loop makes no per-showing call -- unlike Cinemark or Regal,
+          // where each price is its own round trip.
+          let firstErr = null;
+          for (const sh of target.showings) {
+            if (!sh.showingId) continue;
+            try {
+              const priced = await getBrendenTicketPricing({
+                site: target.chainSlug,
+                showingId: sh.showingId,
+                dateISO,
+              });
+              if (!priced || priced.price == null) continue;
+              sh.price = priced.price;
+              sh.priceBeforeFee = priced.priceBeforeFee;
+              // Brenden states the booking fee as real per-showing data
+              // (amount, channel and conditions all come from their own fee
+              // records), so this is their figure rather than an estimate.
+              sh.fee = priced.fee;
+              sh.feeStatus = "confirmed";
+              sh.ticketTypeName = priced.ticketTypeName;
+              priceModel.record({
+                chain: "brenden",
+                theaterName: priceModelNameFor(target),
+                format: IMAX_70MM_BUCKET_FORMAT,
+                startTimeRaw: sh.time,
+                dateISO,
+                price: sh.price,
+              });
+            } catch (err) {
+              if (!firstErr) firstErr = err;
+            }
+          }
+          const pricedCount = target.showings.filter((x) => x.price != null).length;
+          target.pricedNow = true;
+          console.error(`IMAX 70mm: priced ${target.name} -- ${pricedCount}/${target.showings.length} showings, 0 credit(s).`);
+          if (!pricedCount) {
+            if (firstErr) throw firstErr;
+            throw new Error("Brenden returned no sellable ticket types for these showings");
           }
         } catch (err) {
           target.priceError = err.message;

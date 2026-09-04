@@ -3177,7 +3177,7 @@
             ${times ? `<div class="imax70-row-times">${times}</div>` : ''}
             ${feeNote}
             ${v.seating ? `<div class="imax70-row-seats" title="${escapeHtml(v.seating.note || '')}">sit in row ${escapeHtml(v.seating.best)}</div>` : ''}
-            ${(v.showings && v.showings.length && v.showings.every((sh) => sh.price == null) && (v.chain === 'regal' || v.chain === 'cinemark' || v.chain === 'harkins' || v.chain === 'applecinemas'))
+            ${(v.showings && v.showings.length && v.showings.every((sh) => sh.price == null) && (v.chain === 'regal' || v.chain === 'cinemark' || v.chain === 'harkins' || v.chain === 'applecinemas' || v.chain === 'brenden'))
               ? `<button class="locate-btn imax70-price-btn" data-venue="${escapeHtml(v.name)}"${imax70Pricing.has(v.name) ? ' disabled' : ''} style="margin-top:5px; font-size:11px;">` +
                 // Relabelled after a failure. The button legitimately comes back
                 // -- pricing is retryable -- but an unchanged label made a failed
