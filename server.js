@@ -47,6 +47,7 @@ const CINEMAWEST_THEATER_MAP = require("./lib/cinemawest-theater-map");
 const { getShowtimesForSite: getCinemaWestShowtimes, getTicketPricing: getCinemaWestTicketPricing, getFreshTokenCached: getCinemaWestFreshToken } = require("./lib/priceAdapters/cinemawest-official");
 const { keepSseAlive } = require("./lib/sse-keepalive");
 const { createAccessGate, createDailyBudget } = require("./lib/access-gate");
+const { sendAlert } = require("./lib/alerts");
 const { getHarkinsTheaters } = require("./lib/harkins-theaters");
 const { getShowtimesForCinema: getCelebrationShowtimes } = require("./lib/priceAdapters/celebration-official");
 const {
@@ -127,9 +128,17 @@ app.use(createAccessGate({ key: process.env.ACCESS_KEY }));
 // hundred addresses. Set DAILY_SEARCH_BUDGET=0 to lift it entirely.
 const dailySearchBudget = createDailyBudget({
   limit: process.env.DAILY_SEARCH_BUDGET === undefined ? 1000 : Number(process.env.DAILY_SEARCH_BUDGET),
-  onTrip: ({ used, limit, resetsAt }) => console.error(
-    `Daily search budget reached -- ${used}/${limit} searches, resets ${new Date(resetsAt).toISOString()}. ` +
-    `Raise DAILY_SEARCH_BUDGET if this was legitimate traffic.`
+  // Half the budget is the signal worth acting on: the trip tells you abuse
+  // already happened, this tells you while there's still headroom -- and the
+  // intended reaction (setting ACCESS_KEY) needs a redeploy to take effect.
+  onWarn: ({ used, limit }) => sendAlert(
+    `Showtime Finder is at ${used}/${limit} searches today (${Math.round((used / limit) * 100)}% of the daily budget). ` +
+    `Normal for a busy day; if it isn't, set ACCESS_KEY to make the app invite-only.`
+  ),
+  onTrip: ({ used, limit, resetsAt }) => sendAlert(
+    `Showtime Finder has hit its daily search budget (${used}/${limit}) and is refusing searches until ` +
+    `${new Date(resetsAt).toLocaleString()}. Raise DAILY_SEARCH_BUDGET if this was legitimate traffic, ` +
+    `or set ACCESS_KEY if it wasn't.`
   ),
 });
 

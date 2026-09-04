@@ -727,7 +727,19 @@ other three `flushHeaders()` sites are immediate-exit paths and need nothing.
     still holds if a link leaks. It answers **503**, not the per-IP limiter's
     429, so the logs distinguish a service ceiling from a per-caller verdict.
     It runs AFTER the per-IP limiter so a request already refused for one
-    visitor never eats the shared pool.
+    visitor never eats the shared pool. It alerts **twice**: once at half the
+    budget and once when exhausted. The early one is the actionable signal --
+    the trip says abuse already happened, half says so while there is still a
+    day's headroom, which matters because the intended reaction (setting
+    `ACCESS_KEY`) needs a redeploy. Each fires once per day, not per request.
+  - **`ALERT_WEBHOOK_URL`** (`lib/alerts.js`) is how any of that actually
+    reaches you. `console.error` goes to Render's logs, which is a place you
+    have to remember to look -- useless as a warning. Deliberately a generic
+    URL rather than an integration: it posts `{content, text}`, so Discord
+    reads `content`, Slack reads `text`, each ignores the other's key, and
+    ntfy.sh shows the body -- no SDK, no API key, nothing to maintain. Alerts
+    are fire-and-forget and never retry: a missed alert must not become a
+    second incident, and the console line records it regardless.
 - **`APP_PASSWORD` is a real, functioning access gate** (`server.js`
   line ~46-70s), not decorative — set it before exposing this past
   localhost (e.g. via a tunnel or Railway) or anyone with the URL can burn
