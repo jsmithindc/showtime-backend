@@ -693,6 +693,20 @@ other three `flushHeaders()` sites are immediate-exit paths and need nothing.
   egress here doesn't reach cinemark.com or regencymovies.com. Treat their
   request-building logic as verified-against-captured-samples, not
   verified-end-to-end, and expect first-real-run adjustment.
+- **The per-IP rate limiter does not cover every paid endpoint by default.**
+  `searchRateLimiter` (200/day, `SEARCH_RATE_LIMIT_PER_DAY`) now guards
+  `/api/search`, `/api/window-search`, `/api/search-regal`, `/api/imax-70mm`,
+  `/api/price-regal-showing` and `/api/geocode`. The last three were added
+  later than the limiter and were unguarded until 2026-09-03 -- worth checking
+  when a NEW endpoint is added, since the expensive ones are exactly the ones
+  that get written last. `/api/imax-70mm` is the one that matters most: its
+  listing is cached to midnight, but `priceVenue` is not cached at all, and
+  each call runs a real Regal `createOrder` against the Cloudflare POST budget
+  the whole proxy chain exists to protect. `/api/version`, `/api/us-map`,
+  `/api/movies` and `/api/popular-movies` stay unlimited on purpose -- static
+  or shared-cached, and the frontend calls them on every page load.
+  Counts are **in-memory**, so they reset on redeploy and are per-instance;
+  Upstash is already wired up if that ever needs to be shared.
 - **`APP_PASSWORD` is a real, functioning access gate** (`server.js`
   line ~46-70s), not decorative — set it before exposing this past
   localhost (e.g. via a tunnel or Railway) or anyone with the URL can burn

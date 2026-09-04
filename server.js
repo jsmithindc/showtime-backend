@@ -212,7 +212,7 @@ async function getHarkinsAllForVenue(venue, dateISO) {
   return out;
 }
 
-app.get("/api/imax-70mm", async (req, res) => {
+app.get("/api/imax-70mm", searchRateLimiter, async (req, res) => {
   const { lat, lng, movie, date } = req.query;
   // only70mm: list the venue's actual IMAX 70mm showings rather than checking
   // for one film. AMC exposes an IMAX70MM attribute code and Regal spells it
@@ -3543,7 +3543,7 @@ app.get("/api/search", searchRateLimiter, async (req, res) => {
 // parallel. Without this, both backend calls geocode the same place
 // simultaneously, racing to Nominatim and triggering 429s on Render's
 // shared datacenter IP range even though one call would have been enough.
-app.get("/api/geocode", async (req, res) => {
+app.get("/api/geocode", searchRateLimiter, async (req, res) => {
   const { place } = req.query;
   if (!place) return res.status(400).json({ error: "place is required" });
   try {
@@ -4378,7 +4378,7 @@ app.get("/api/search-regal", searchRateLimiter, async (req, res) => {
 // On-demand pricing for a single Regal performance -- used by the
 // frontend's overflow "Show them" path to fetch a real ticket price
 // for showings that were beyond the per-theater cap during the main search.
-app.get("/api/price-regal-showing", async (req, res) => {
+app.get("/api/price-regal-showing", searchRateLimiter, async (req, res) => {
   const { cinemaCode, performanceId, movieId, movie, dateISO, startTime, format } = req.query;
   if (!cinemaCode || !performanceId || !movie || !dateISO) {
     return res.status(400).json({ error: "cinemaCode, performanceId, movie, and dateISO are required" });
