@@ -3593,7 +3593,19 @@ app.get("/api/geocode", searchRateLimiter, dailySearchBudget, async (req, res) =
 // page most visits never open that tab from. Immutable, so cache it hard.
 app.get("/api/us-map", (req, res) => {
   res.set("Cache-Control", "public, max-age=86400");
-  res.json({ viewBox: US_VIEWBOX, path: require("./lib/us-map-path") });
+  // The venue dots ship WITH the outline so the map can be drawn before any
+  // search -- an empty country is a worse first impression than a full one,
+  // and this list is static anyway. A search re-renders the same dots with
+  // distances and showings attached. Projected here for the same reason the
+  // search path projects here: one projection, not two implementations that
+  // have to stay in step with lib/us-map.js forever.
+  const venues = IMAX_70MM_VENUES
+    .filter((v) => typeof v.lat === "number" && typeof v.lng === "number")
+    .map((v) => {
+      const [mapX, mapY] = projectUS(v.lat, v.lng);
+      return { name: v.name, city: v.city, state: v.state, chain: v.chain || null, mapX, mapY };
+    });
+  res.json({ viewBox: US_VIEWBOX, path: require("./lib/us-map-path"), venues });
 });
 
 app.get("/api/popular-movies", async (req, res) => {

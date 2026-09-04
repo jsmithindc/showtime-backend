@@ -598,7 +598,10 @@
   /* The 25 screens on a US map. Deliberately an inline SVG rather than a tile
      map: no external tiles, no map library, nothing to fail mid-search, and it
      takes the page's own colours instead of fighting a light basemap. */
-  .imax70-map { width: 100%; height: auto; margin: 6px 0 14px; display: block; }
+  /* Capped so the map never pushes the search form below the fold on a
+     laptop -- it is context, not the task. Centred because a capped SVG would
+     otherwise sit left of the panel it introduces. */
+  .imax70-map { width: 100%; height: auto; max-height: 44vh; margin: 6px auto 14px; display: block; }
   .imax70-map .outline { fill: var(--marquee-2); stroke: var(--stub-line); stroke-width: 1; }
   .imax70-map .venue { cursor: pointer; }
   .imax70-map .venue circle { stroke: var(--marquee); stroke-width: 1.5; transition: r .12s ease; }
@@ -606,18 +609,53 @@
   .imax70-map .venue.has-showings circle { fill: var(--gold); }
   .imax70-map .venue.checked circle { fill: var(--ink-dim); opacity: .75; }
   .imax70-map .venue.unchecked circle { fill: var(--stub-line); }
+  /* Before any search there is no checked/unchecked distinction to draw, so
+     the dots carry no information by being faint -- they just look broken.
+     In that state they are the point of the map, so they get to be seen. */
+  .imax70-map.baseline .venue circle { fill: var(--gold-dim); }
+  .imax70-map.baseline .venue:hover circle { fill: var(--gold); }
   .imax70-map-key { font-size: 10px; color: var(--ink-dim); opacity: .8; margin: -8px 0 14px; }
   .imax70-map-key b { color: var(--gold); font-weight: 700; }
 
   .imax70-foot { margin-top: 8px; font-size: 10px; color: var(--ink-dim); opacity: .75; }
-  #imax70Intro {
-    margin: 2px 0 16px;
-    max-width: 68ch;
-    font-size: 12.5px;
+  /* One italic line of prose, then the numbers as numbers. A spec-heavy
+     paragraph set entirely in small dim italics is hard to read and looks like
+     a disclaimer; the figures are the interesting part, so they are set like
+     figures rather than buried mid-sentence. */
+  #imax70Intro { margin: 2px 0 18px; max-width: 70ch; }
+  .imax70-lede {
+    margin: 0 0 12px;
+    font-size: 13px;
     line-height: 1.6;
     color: var(--ink-dim);
     font-style: italic;
   }
+  .imax70-specs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 26px;
+    margin: 0;
+    padding: 11px 0 0;
+    border-top: 1px solid var(--stub-line);
+  }
+  .imax70-specs div { display: flex; flex-direction: column; gap: 2px; }
+  .imax70-specs dt {
+    font-family: Georgia, serif;
+    font-size: 19px;
+    line-height: 1;
+    color: var(--gold);
+    font-variant-numeric: tabular-nums;
+  }
+  .imax70-specs dd {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 9.5px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    opacity: .85;
+  }
+  @media (max-width: 480px) { .imax70-specs { gap: 10px 18px; } .imax70-specs dt { font-size: 17px; } }
   .imax70-seats { margin-top: 5px; font-size: 11px; color: var(--ink-dim); opacity: .95; }
   .imax70-seats b { color: var(--gold); }
   .imax70-tag {
@@ -776,7 +814,16 @@
          The map leads the page: it is the overview, and putting it inside the
          results pushed the first showing 880px down, past the fold. -->
     <div id="imax70Map" style="display:none;"></div>
-    <p id="imax70Intro" style="display:none;">IMAX 70mm offers the largest and highest resolution film format available, providing an incredibly immersive viewing experience with up to 18K equivalent resolution and a unique aspect ratio of 1.43:1. This format captures more image information, making visuals appear sharper and more detailed on colossal screens.</p>
+    <div id="imax70Intro" style="display:none;">
+      <p class="imax70-lede">The largest, highest-resolution film format ever made &mdash; a negative nine times
+        the size of standard 35mm, run horizontally so each frame is wider than the strip itself.</p>
+      <dl class="imax70-specs">
+        <div><dt>1.43:1</dt><dd>aspect ratio</dd></div>
+        <div><dt>18K</dt><dd>equivalent resolution</dd></div>
+        <div><dt>15/70</dt><dd>film gauge</dd></div>
+        <div><dt id="imax70Count">&mdash;</dt><dd>screens in the US</dd></div>
+      </dl>
+    </div>
 
     <div id="specificMovieFields">
       <div class="row">
@@ -1027,9 +1074,14 @@
     // for the two search modes.
     els.imax70Body.style.display = isImax ? '' : 'none';
     if (els.imax70Intro) els.imax70Intro.style.display = isImax ? '' : 'none';
-    // Only once it has content: an empty box above the intro before the first
-    // search would just be a gap.
-    if (els.imax70Map) els.imax70Map.style.display = (isImax && els.imax70Map.innerHTML) ? '' : 'none';
+    // Drawn as soon as the tab is opened, with every venue faint and nothing
+    // selected -- an empty country reads as "broken" where a full one reads as
+    // "here is the whole set, now narrow it". A search re-renders the same
+    // dots with distances and showings attached.
+    if (els.imax70Map) {
+      els.imax70Map.style.display = isImax ? '' : 'none';
+      if (isImax) drawBaseImax70Map();
+    }
     // Leaving the tab hides its bar; coming back shows the last lookup's
     // timings again, which is the same thing the snapshot does for the others.
     if (els.imax70Timing) els.imax70Timing.style.display = (isImax && els.imax70Timing.textContent) ? '' : 'none';
@@ -3104,9 +3156,26 @@
                `<circle cx="${v.mapX}" cy="${v.mapY}" r="6"></circle></a>`;
       }).join('');
     if (!dots) return '';
-    return `<svg class="imax70-map" viewBox="${escapeHtml(usMapData.viewBox)}" role="img" aria-label="US map of IMAX 70mm screens">` +
+    const baseline = !venues.some((v) => v.checked || (v.showings && v.showings.length));
+    return `<svg class="imax70-map${baseline ? ' baseline' : ''}" viewBox="${escapeHtml(usMapData.viewBox)}" role="img" aria-label="US map of IMAX 70mm screens">` +
              `<path class="outline" d="${usMapData.path}"></path>${dots}</svg>` +
-           `<div class="imax70-map-key"><b>Gold</b> = showing today &middot; grey = checked, nothing on 70mm &middot; faint = not checked. Hover for the venue, click to open it.</div>`;
+           `<div class="imax70-map-key">${
+             !baseline
+               ? '<b>Gold</b> = showing today &middot; grey = checked, nothing on 70mm &middot; faint = not checked. Hover for the venue, click to open it.'
+               : `Every IMAX 70mm screen in the country. Hover for a venue, click to open it &mdash; or search to see what's playing.`
+           }</div>`;
+  }
+
+  // The outline and the venue dots both ship from /api/us-map, so the empty
+  // state costs one cached request and no search. Only ever fills an EMPTY
+  // map: once a lookup has drawn real results, this must not paint over them.
+  async function drawBaseImax70Map() {
+    if (!els.imax70Map || els.imax70Map.innerHTML) return;
+    const data = await ensureUsMap();
+    if (!data || !data.venues || els.imax70Map.innerHTML) return;
+    const count = document.getElementById('imax70Count');
+    if (count) count.textContent = String(data.venues.length);
+    els.imax70Map.innerHTML = imax70MapHtml(data.venues);
   }
 
   function renderImax70(data) {

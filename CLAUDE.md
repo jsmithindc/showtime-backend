@@ -377,6 +377,22 @@ have no adapter, so those report `checked: false` rather than "no showings",
 which would be a different and wrong claim -- and the UI stays silent about
 them rather than implying anything.
 
+**The map is drawn as soon as the tab opens, before any search.** `/api/us-map`
+ships the venue dots alongside the outline (both projected server-side, so
+there is one projection rather than two implementations to keep in step), which
+makes the empty state one cached request and no lookup. With nothing checked
+the SVG carries a `baseline` class: every dot is muted gold rather than faint,
+because the faint/checked distinction carries no information before a search --
+it just looks broken -- and the key reads "every IMAX 70mm screen in the
+country" instead of a legend for states that don't exist yet. A search
+re-renders the same dots with distances and showings attached. Capped at
+`44vh` so it stays context rather than pushing the search form off the fold.
+
+The explanation beside it is **one italic line plus a figure strip** (1.43:1,
+18K, 15/70, and a live count of venues) rather than a paragraph. A spec-heavy
+block set entirely in small dim italics reads as a disclaimer and hides the
+only interesting part; the numbers are set as numbers instead.
+
 Surfaced as a **third mode button, right-aligned** (`.mode-aside`) to signal it
 is a different kind of thing from the two search modes beside it. That tab
 shows only the location field -- date, radius, deadline, format and chain
