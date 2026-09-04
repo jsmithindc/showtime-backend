@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#14121a"/>
+      <stop offset="100%" stop-color="#1d1a24"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- top film strip -->
+  <rect x="0" y="0" width="1200" height="52" fill="#0e0c14"/>
+  <rect x="18"  y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="72"  y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="126" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="180" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="234" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="288" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="342" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="396" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="450" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="504" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="558" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="612" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="666" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="720" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="774" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="828" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="882" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="936" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="990" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="1044" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="1098" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="1152" y="10" width="36" height="32" rx="5" fill="#1d1a24"/>
+
+  <!-- bottom film strip -->
+  <rect x="0" y="578" width="1200" height="52" fill="#0e0c14"/>
+  <rect x="18"  y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="72"  y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="126" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="180" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="234" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="288" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="342" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="396" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="450" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="504" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="558" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="612" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="666" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="720" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="774" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="828" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="882" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="936" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="990" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="1044" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="1098" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+  <rect x="1152" y="588" width="36" height="32" rx="5" fill="#1d1a24"/>
+
+  <!-- gold rule -->
+  <rect x="100" y="220" width="1000" height="2" fill="#e2a545" opacity="0.3"/>
+  <rect x="100" y="400" width="1000" height="2" fill="#e2a545" opacity="0.3"/>
+
+  <!-- main title -->
+  <text x="600" y="312"
+        font-family="Georgia, 'Times New Roman', serif"
+        font-size="96"
+        font-weight="bold"
+        text-anchor="middle"
+        letter-spacing="4"
+        fill="#f4efe6">SHOWTIME FINDER</text>
+
+  <!-- subtitle -->
+  <text x="600" y="372"
+        font-family="Georgia, 'Times New Roman', serif"
+        font-size="32"
+        font-style="italic"
+        text-anchor="middle"
+        fill="#e2a545">Find the cheapest showing near you</text>
+
+  <!-- domain -->
+  <text x="600" y="556"
+        font-family="-apple-system, 'Helvetica Neue', sans-serif"
+        font-size="22"
+        text-anchor="middle"
+        letter-spacing="2"
+        fill="#b8ada0">showtimefinder.jmvarghe.vip</text>
+</svg>

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="7" fill="#14121a"/>
+  <!-- film strip perforations left -->
+  <rect x="3" y="5" width="4" height="3" rx="1" fill="#e2a545"/>
+  <rect x="3" y="11" width="4" height="3" rx="1" fill="#e2a545"/>
+  <rect x="3" y="17" width="4" height="3" rx="1" fill="#e2a545"/>
+  <rect x="3" y="23" width="4" height="3" rx="1" fill="#e2a545"/>
+  <!-- film strip perforations right -->
+  <rect x="25" y="5" width="4" height="3" rx="1" fill="#e2a545"/>
+  <rect x="25" y="11" width="4" height="3" rx="1" fill="#e2a545"/>
+  <rect x="25" y="17" width="4" height="3" rx="1" fill="#e2a545"/>
+  <rect x="25" y="23" width="4" height="3" rx="1" fill="#e2a545"/>
+  <!-- frame area -->
+  <rect x="9" y="4" width="14" height="24" rx="1" fill="#1d1a24"/>
+  <!-- play triangle -->
+  <polygon points="13,11 13,21 22,16" fill="#e2a545"/>
+</svg>
