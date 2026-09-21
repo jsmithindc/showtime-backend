@@ -1539,13 +1539,18 @@
         // *extra* found," not "nothing at all."
         els.movie.innerHTML = '<option value="" disabled selected>No movies found nearby</option>';
       }
-      els.statusLine.textContent = data.movies.length
-        ? `Found ${data.movies.length} movie(s) playing across ${data.theatersChecked} nearby theater(s) -- pick one from the Movie dropdown.`
-        : data.theatersChecked > 0
-          ? `Found ${data.theatersChecked} theater(s) nearby but couldn't retrieve their schedules (SerpApi quota may be exhausted).`
-          : `No theaters found in range -- try widening the radius.`;
+      // Don't overwrite the film hero if a search result is already showing.
+      if (!els.statusLine.querySelector('.film-hero')) {
+        els.statusLine.textContent = data.movies.length
+          ? `Found ${data.movies.length} movie(s) playing across ${data.theatersChecked} nearby theater(s) -- pick one from the Movie dropdown.`
+          : data.theatersChecked > 0
+            ? `Found ${data.theatersChecked} theater(s) nearby but couldn't retrieve their schedules (SerpApi quota may be exhausted).`
+            : `No theaters found in range -- try widening the radius.`;
+      }
     } catch (err) {
-      els.statusLine.textContent = `Couldn't reach the server for movie lookup: ${err.message}`;
+      if (!els.statusLine.querySelector('.film-hero')) {
+        els.statusLine.textContent = `Couldn't reach the server for movie lookup: ${err.message}`;
+      }
     } finally {
       els.loadMoviesBtn.disabled = false;
       els.loadMoviesBtn.textContent = 'Not seeing it?';
