@@ -3460,7 +3460,10 @@ app.get("/api/search", searchRateLimiter, dailySearchBudget, async (req, res) =>
       // break on a no-results search).
       runtimeMinutes: realRuntimeMin,
       runtimeIsEstimate,
-      ratings: await ratingsPromise,
+      ratings: await Promise.race([
+        ratingsPromise,
+        new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
+      ]).catch(() => null),
       // True 15/70 film venues are rare enough (24 known in the US) that the
       // nearest one is worth knowing regardless of what was searched -- and it
       // is NOT the same thing as the "IMAX" format chip, which is digital IMAX.
