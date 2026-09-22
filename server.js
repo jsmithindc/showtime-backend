@@ -5063,6 +5063,13 @@ console.log(
     : `WARNING: no proxy providers are configured at all -- Regal pricing will fail outright. ` +
       `Check SCRAPEDO_TOKEN, ZENROWS_API_KEY, APIFY_API_TOKEN, FIRECRAWL_API_KEY in start.sh.`
 );
+console.log(
+  process.env.MDBLIST_API_KEY
+    ? `Ratings: MDBList configured (key length ${process.env.MDBLIST_API_KEY.length})`
+    : process.env.OMDB_API_KEY
+    ? `Ratings: OMDb configured (MDBList key not set)`
+    : `Ratings: NOT configured -- no MDBLIST_API_KEY or OMDB_API_KEY set`
+);
 
 // TEMPORARY debug endpoint: fetch a Regal showtime page via byparr and
 // Warm the learned-pricing model before serving. Cheap (one cache read) and
