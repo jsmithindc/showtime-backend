@@ -225,7 +225,12 @@ truth over this summary if the two ever disagree.
 | **Regency** | `priceAdapters/regency-official.js` | Runs on "Mobile Moviegoing," a plain PHP platform — genuinely different stack from the Vista-family chains (Regal/Cinema West/Harkins). Pricing (`getSeatData.php` → `ticketClassArray`) is confirmed live, but requires already knowing a `perf` (performance) ID — **there is still no confirmed discovery endpoint** for finding performance IDs from a movie/theater/date; the showtimes listing is presumed server-rendered into theater/movie page HTML rather than a separate API, but a direct page fetch got a 405 from this project's sandbox. Ticket-type naming is unusual: types are named after the day ("Tuesday") rather than "Adult"; filter by excluding `bonus: true` (loyalty tier) rather than by age-keyword. Requires per-theater cookies (`visitID`, `hasSeenPopup`, `siteID` matching the specific theater's `seatsSiteId`) — a bare/static cookie silently gets "Error loading showtimes." with no other error signal. |
 
 (Cinema West also has a live adapter, `cinemawest-official.js`, not
-requested above but present in `server.js` under `chain: "cinemawest"`.)
+requested above but present in `server.js` under `chain: "cinemawest"`.
+One theater, Country Club Cinema. Its token page 403'd from Render on every
+search until 2026-09-22, when all three of its requests -- token page,
+showtimes, ticket prices -- moved to `camofox-cinemawest`. That instance's
+host is the bare `cinemawest.com` so the API on `digital-api.` passes
+`supports()` too; from a tab on the site it is a CORS-permitted call.)
 
 ## Caching tiers
 
