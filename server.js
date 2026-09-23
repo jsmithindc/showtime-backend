@@ -3460,6 +3460,8 @@ app.get("/api/search", searchRateLimiter, dailySearchBudget, async (req, res) =>
       // break on a no-results search).
       runtimeMinutes: realRuntimeMin,
       runtimeIsEstimate,
+      // Capped: ratings also go out on their own `ratings` event, so a slow
+      // lookup must not hold up `done`.
       ratings: await Promise.race([
         ratingsPromise,
         new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
@@ -5068,9 +5070,9 @@ console.log(
 );
 console.log(
   process.env.MDBLIST_API_KEY
-    ? `Ratings: MDBList configured (key length ${process.env.MDBLIST_API_KEY.length})`
+    ? `Ratings: MDBList${process.env.OMDB_API_KEY ? ", OMDb fallback" : ""}`
     : process.env.OMDB_API_KEY
-    ? `Ratings: OMDb configured (MDBList key not set)`
+    ? `Ratings: OMDb (MDBLIST_API_KEY not set)`
     : `Ratings: NOT configured -- no MDBLIST_API_KEY or OMDB_API_KEY set`
 );
 

@@ -237,7 +237,9 @@ and pushes to Redis fire-and-forget -- never await it on a search path. Set
 `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` to enable; unset,
 everything behaves exactly as before. Entries over 400KB stay local.
 
-Going through it: geocodes (90d), AMC/Harkins/Regal theater lists (24h), drive
+Going through it: geocodes (90d), AMC/Harkins theater lists (24h), Regal's
+theater list (7d -- it is fetched through Camofox, so a daily expiry put a
+cold-browser round trip on every morning's first search), drive
 times (30d), IMDb ratings map, **Regal + Atom showtime listings** (TTL runs to
 midnight, so a morning search's showtimes are reused all day and now survive a
 redeploy), and the **ratings payload** (12h) -- which is where poster URLs live,
@@ -249,6 +251,15 @@ Cached ratings are stored **wrapped** (`{ value }`) because `null` is a real
 answer meaning "OMDb doesn't have this film" -- an unwrapped null is
 indistinguishable from a cache miss and would be re-asked forever. The sync `readDiskCache`/`writeDiskCache` still exist and are
 local-only -- prefer `readCache`/`writeCache` for anything new.
+
+**Redis keys carry a `showtime:` prefix** (`redisKey()` in `disk-cache.js`), so
+the cache name in a log line is NOT the key in Upstash: `ratings-residentevil::2026`
+is stored as `showtime:ratings-residentevil::2026`. A `DEL` on the bare name
+returns 0 and looks like the entry already expired. `KEYS *residentevil*` finds it.
+
+Ratings come from **MDBList** (`lib/mdblist.js`) when `MDBLIST_API_KEY` is set,
+falling back to OMDb + the RT scraper whenever MDBList has no answer. OMDb is
+still asked for the poster when MDBList's result doesn't carry one.
 
 **Still local-only:** `.overpass-cache.json` and `.serpapi-schedule-cache.json`
 keep their own bespoke files and do not go through this. Overpass is the more
