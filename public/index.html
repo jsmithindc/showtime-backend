@@ -104,7 +104,8 @@
 
   input[type="text"],
   input[type="number"],
-  input[type="time"] {
+  input[type="time"],
+  input[type="date"] {
     width: 100%;
     max-width: 100%;
     background: var(--marquee);
@@ -126,10 +127,16 @@
      appearance hands sizing back to normal CSS box-model rules; the
      control still opens the native wheel picker on tap since it's still
      type="time", only its skin changes. */
-  input[type="time"] {
+  input[type="time"],
+  input[type="date"] {
     -webkit-appearance: none;
     appearance: none;
   }
+  /* The date field had no styling at all, so iOS drew its small native pill
+     beside full-width fields. Stripped like the time field, WebKit centres the
+     value and lets an empty control collapse -- hence these two. */
+  input[type="date"] { min-height: 37px; }
+  input[type="date"]::-webkit-date-and-time-value { text-align: left; }
 
   .coord-row { display: flex; gap: 8px; align-items: flex-end; }
   .coord-row .field { flex: 1; }
@@ -423,11 +430,15 @@
   }
 
   .card-body { flex: 1; padding: 12px 16px; min-width: 0; }
+  /* Wraps so a long distance label ("24 min away · just outside") drops to its
+     own line. Without it the label, which never shrinks, took the whole row and
+     squeezed the theater name to nothing. */
   .card-top {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: baseline;
-    gap: 10px;
+    gap: 2px 10px;
     min-width: 0;
   }
   .theater-name { font-weight: 600; font-size: 15px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -528,6 +539,15 @@
     .poster-thumb { width: 60px; }
     .poster-hero { width: 104px; }
     .film-hero .poster-hero { width: min(240px, 80%); }
+    /* At 200px the price stub took over half a phone screen and cut off the
+       theater name, which is the part you actually need to read. */
+    .price-col { width: 96px; padding: 10px 6px; }
+    .price { font-size: 17px; }
+    .price-breakdown { font-size: 10px; }
+    .stubs-stub { padding: 5px 4px; max-width: 100%; box-sizing: border-box; }
+    .stubs-row { flex-wrap: wrap; gap: 0 6px; justify-content: center; }
+    .stubs-amt { font-size: 11px; white-space: normal; }
+    .card-body { padding: 12px; }
   }
 
   .ratings { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 6px; }
@@ -1232,7 +1252,11 @@
     } catch {
       els.movie.innerHTML = '<option value="" disabled selected>Fill in a location and press "Not seeing it?" to find movies</option>';
     }
+    // Whatever "Not seeing it?" already found for this date, from an earlier
+    // visit today.
+    if (mergeMovieOptions(readNearbyMovies(els.searchDate.value))) pendingMovieSelection = null;
   })();
+  els.searchDate.addEventListener('change', () => mergeMovieOptions(readNearbyMovies(els.searchDate.value)));
 
   // If the person edits the location text after using "Use my location",
   // the old coordinates are almost certainly stale -- clear them so the
@@ -1432,6 +1456,63 @@
     return `<option value="${escapeHtml(title)}"${mins ? ` data-runtime="${mins}"` : ''}>${escapeHtml(label)}</option>`;
   }
 
+  // Titles found by "Not seeing it?" are kept per date in this browser, so a
+  // reload or a later search that day doesn't drop back to the nationwide
+  // list. A convenience only: without storage the dropdown still works.
+  function nearbyMoviesKey(dateISO) { return `nearbyMovies:${dateISO}`; }
+  function readNearbyMovies(dateISO) {
+    try { return JSON.parse(localStorage.getItem(nearbyMoviesKey(dateISO))) || []; } catch { return []; }
+  }
+  function saveNearbyMovies(dateISO, movies) {
+    try {
+      const byTitle = new Map(readNearbyMovies(dateISO).map((m) => [movieTitleOf(m), m]));
+      for (const m of movies) {
+        const prev = byTitle.get(movieTitleOf(m));
+        if (!prev || (!prev.runtimeMinutes && m.runtimeMinutes)) byTitle.set(movieTitleOf(m), m);
+      }
+      localStorage.setItem(nearbyMoviesKey(dateISO), JSON.stringify([...byTitle.values()]));
+      const d = new Date();
+      const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('nearbyMovies:') && k.slice('nearbyMovies:'.length) < today) localStorage.removeItem(k);
+      }
+    } catch { /* storage unavailable */ }
+  }
+
+  // Adds titles the dropdown doesn't have yet, fills runtimes it was missing,
+  // and keeps the list alphabetical. Returns true if the saved selection from
+  // a previous visit was among them and got applied.
+  function mergeMovieOptions(movies) {
+    const currentSelection = els.movie.value;
+    const byValue = new Map([...els.movie.options].filter((o) => o.value).map((o) => [o.value, o]));
+    let added = false;
+    for (const m of movies) {
+      const title = movieTitleOf(m);
+      const existing = byValue.get(title);
+      if (!existing) {
+        els.movie.insertAdjacentHTML('beforeend', movieOptionHtml(m));
+        added = true;
+      } else if (!existing.dataset.runtime && m.runtimeMinutes) {
+        existing.textContent = `${title} (${fmtRuntime(m.runtimeMinutes)})`;
+        existing.dataset.runtime = m.runtimeMinutes;
+      }
+    }
+    if (added) {
+      // A "nothing loaded" placeholder no longer applies once real titles exist.
+      [...els.movie.options].filter((o) => !o.value).forEach((o) => o.remove());
+      [...els.movie.options]
+        .sort((a, b) => a.value.localeCompare(b.value, undefined, { sensitivity: 'base' }))
+        .forEach((opt) => els.movie.appendChild(opt)); // re-appending moves, doesn't duplicate
+    }
+    if (pendingMovieSelection && [...els.movie.options].some((o) => o.value === pendingMovieSelection)) {
+      els.movie.value = pendingMovieSelection;
+      return true;
+    }
+    if (currentSelection) els.movie.value = currentSelection;
+    return false;
+  }
+
   function setupChipGroupToggle(toggleEl, chipsEl, sectionEl, statusEl) {
     function updateLabel() {
       const chips = [...chipsEl.querySelectorAll('.chip')];
@@ -1503,34 +1584,8 @@
         // list, most likely) rather than replacing it -- this button is
         // now specifically for "add what's missing," so wiping out
         // options that were already there would be a regression.
-        const currentSelection = els.movie.value;
-        const existingTitles = new Set(
-          [...els.movie.options].map((o) => o.value).filter(Boolean)
-        );
-        const newTitles = data.movies.filter((m) => !existingTitles.has(movieTitleOf(m)));
-        if (newTitles.length) {
-          els.movie.insertAdjacentHTML(
-            'beforeend',
-            newTitles.map(movieOptionHtml).join('')
-          );
-          // Keep the whole list alphabetical after appending -- without
-          // this, newly-discovered titles would land at the end in
-          // whatever order the server returned them, breaking the sort
-          // order the initial "/api/popular-movies" load already
-          // established.
-          const sortedOptions = [...els.movie.options].sort((a, b) =>
-            a.value.localeCompare(b.value, undefined, { sensitivity: 'base' })
-          );
-          sortedOptions.forEach((opt) => els.movie.appendChild(opt)); // re-appending an existing <option> moves it, doesn't duplicate it
-        }
-        // Re-apply a saved selection from a previous session if it's
-        // now among the loaded movies; otherwise keep whatever was
-        // already selected.
-        if (pendingMovieSelection && [...els.movie.options].some((o) => o.value === pendingMovieSelection)) {
-          els.movie.value = pendingMovieSelection;
-        } else if (currentSelection) {
-          els.movie.value = currentSelection;
-        }
+        mergeMovieOptions(data.movies);
+        saveNearbyMovies(els.searchDate.value, data.movies);
         pendingMovieSelection = null;
       } else if (![...els.movie.options].some((o) => o.value)) {
         // Only show "nothing found" if the dropdown is otherwise
@@ -2176,7 +2231,7 @@
   // sorting was already happening server-side. "Cheapest" price and
   // "closest" distance are independent orderings of the same data, not
   // something that needs a new search.
-  let resultSortMode = 'price'; // 'price' | 'distance'
+  let resultSortMode = 'price'; // 'price' | 'distance' | 'earliest' | 'latest'
 
   // Whether the "earlier showings" block is expanded. Kept here rather than
   // read back off the DOM because renderResults rebuilds els.results wholesale
@@ -2610,7 +2665,11 @@
     // the "where's my nearest one" question is answered on demand instead, via
     // /api/imax-70mm, because that answer is the same for every search and was
     // pure noise on the 99% of films with no 70mm run.
+    // Own container, replaced rather than appended, for the same reason as the
+    // stinger box below: the hero survives re-renders now, so `innerHTML +=`
+    // added a second copy on the next render (and rebuilt the poster <img>).
     const imax = data.nearestImax70mm;
+    if (!imax) document.getElementById('imax70Box')?.remove();
     if (imax) {
       const far = imax.distanceMin > 180;
       const label = far
@@ -2638,7 +2697,14 @@
               `</div>`
             : '') +
         `</div>`;
-      els.statusLine.innerHTML += imaxHtml;
+      let imaxBox = document.getElementById('imax70Box');
+      if (!imaxBox) {
+        imaxBox = document.createElement('div');
+        imaxBox.id = 'imax70Box';
+        // Above the stinger panel even if that one was created first.
+        els.statusLine.insertBefore(imaxBox, document.getElementById('stingerBox'));
+      }
+      imaxBox.innerHTML = imaxHtml;
     }
     els.pageFooter.innerHTML = footerParts.join('');
 
@@ -2783,8 +2849,10 @@
       <div style="display:flex; align-items:center; gap:8px;">
         <span style="font-size:11px; color:var(--ink-dim);">Sort:</span>
         <div class="sort-toggle">
-          <button class="${resultSortMode === 'price' ? 'on' : ''}" onclick="setResultSortMode('price')">Cheapest first</button>
-          <button class="${resultSortMode === 'distance' ? 'on' : ''}" onclick="setResultSortMode('distance')">Closest first</button>
+          <button class="${resultSortMode === 'price' ? 'on' : ''}" onclick="setResultSortMode('price')">Cheapest</button>
+          <button class="${resultSortMode === 'distance' ? 'on' : ''}" onclick="setResultSortMode('distance')">Closest</button>
+          <button class="${resultSortMode === 'earliest' ? 'on' : ''}" onclick="setResultSortMode('earliest')">Earliest</button>
+          <button class="${resultSortMode === 'latest' ? 'on' : ''}" onclick="setResultSortMode('latest')">Latest</button>
         </div>
       </div>
       ${hasAnyFeeBreakdown ? `<div style="display:flex; align-items:center; gap:8px;">
@@ -2810,7 +2878,24 @@
 
     // Always sort a copy -- overflow items appended client-side aren't
     // pre-sorted by the server, so price mode needs an explicit sort too.
+    // A showing after midnight belongs at the END of the evening, not before
+    // the matinees, so small hours count as the next day.
+    const startMinForSort = (r) => {
+      const [h, m] = String(r.startTime || '').split(':').map(Number);
+      if (isNaN(h)) return null;
+      return (h < 4 ? h + 24 : h) * 60 + (m || 0);
+    };
     const displayResults = [...results].sort((a, b) => {
+      if (resultSortMode === 'earliest' || resultSortMode === 'latest') {
+        const ta = startMinForSort(a), tb = startMinForSort(b);
+        if (ta == null && tb == null) return 0;
+        if (ta == null) return 1;
+        if (tb == null) return -1;
+        if (ta !== tb) return resultSortMode === 'earliest' ? ta - tb : tb - ta;
+        // Same start time: cheaper first.
+        const pa = effectivePriceForSorting(a), pb = effectivePriceForSorting(b);
+        return (pa ?? Infinity) - (pb ?? Infinity);
+      }
       if (resultSortMode === 'distance') {
         const da = a.distanceMin, db = b.distanceMin;
         if (da == null && db == null) return 0;
@@ -2886,11 +2971,14 @@
          </div>`
       : '';
 
-    els.results.innerHTML = movieChipsHtml + filterChipsHtml + chainChipsHtml + sortToggleHtml +
-      earlyHtml +
-      `<div class="list">${lateResults.map((r) =>
+    const mainListHtml = `<div class="list">${lateResults.map((r) =>
         buildCardHtml(r, r === cheapestResult, opts)
-      ).join('')}</div>` + overflowHtml;
+      ).join('')}</div>`;
+    // Latest-first runs backwards in time, so the earlier showings belong after
+    // the list, where the descending order continues.
+    els.results.innerHTML = movieChipsHtml + filterChipsHtml + chainChipsHtml + sortToggleHtml +
+      (resultSortMode === 'latest' ? mainListHtml + earlyHtml : earlyHtml + mainListHtml) +
+      overflowHtml;
   }
 
   window.toggleEarlyShowings = function (btn) {

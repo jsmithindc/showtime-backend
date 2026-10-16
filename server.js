@@ -3633,6 +3633,29 @@ app.get("/api/us-map", (req, res) => {
   res.json({ viewBox: US_VIEWBOX, path: require("./lib/us-map-path"), venues });
 });
 
+// Dropdown runtimes. The AMC catalog only knows what one Dallas AMC is playing,
+// so Regal-only titles, re-releases and indies came back blank. After it, the
+// ratings lookup (MDBList, then OMDb) -- cached 12h, and the same lookup the
+// search for that film will make anyway. Capped so a slow lookup leaves one
+// blank rather than holding up the whole dropdown; it keeps running and fills
+// the cache for next time.
+const DROPDOWN_RUNTIME_WAIT_MS = 4000;
+function fillMissingRuntimes(movies, dateISO) {
+  const year = Number(String(dateISO).slice(0, 4)) || new Date().getFullYear();
+  return Promise.all(movies.map(async (m) => {
+    if (m.runtimeMinutes) return m;
+    let runtimeMinutes = await getAmcRuntimeFromCatalog(m.title, dateISO).catch(() => null);
+    if (!runtimeMinutes && isRatingsConfigured()) {
+      const ratings = await Promise.race([
+        getMovieRatings(m.title, year).catch(() => null),
+        new Promise((resolve) => setTimeout(() => resolve(null), DROPDOWN_RUNTIME_WAIT_MS)),
+      ]);
+      runtimeMinutes = ratings?.runtimeMinutes || null;
+    }
+    return { ...m, runtimeMinutes };
+  }));
+}
+
 app.get("/api/popular-movies", async (req, res) => {
   // Pull live showtimes from AMC Mesquite 30 (Dallas-area anchor) as the
   // default "what's playing" list shown before the user sets a location.
@@ -3655,7 +3678,7 @@ app.get("/api/popular-movies", async (req, res) => {
 
   try {
     const fresh = await readCache(cacheKey, ttlToMidnight);
-    if (fresh && fresh.length) return res.json({ movies: fresh });
+    if (fresh && fresh.length) return res.json({ movies: await fillMissingRuntimes(fresh, todayISO) });
   } catch { /* cache is best-effort; fall through to the live fetch */ }
 
   // TWO sources, tried in order. AMC was the only one, which made a single
@@ -3698,15 +3721,15 @@ app.get("/api/popular-movies", async (req, res) => {
   for (const source of sources) {
     try {
       const raw = await source.load();
-      const seen = new Set();
-      const movies = [];
+      // One entry per title, keeping whichever showing carried a runtime.
+      const byTitle = new Map();
       for (const m of raw) {
         const key = m.title.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        movies.push(m);
+        const prev = byTitle.get(key);
+        if (!prev || (!prev.runtimeMinutes && m.runtimeMinutes)) byTitle.set(key, m);
       }
-      if (!movies.length) throw new Error("returned no titles");
+      if (!byTitle.size) throw new Error("returned no titles");
+      const movies = await fillMissingRuntimes([...byTitle.values()], todayISO);
       movies.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
       writeCache(cacheKey, movies, STALE_TTL_MS);
       console.error(
@@ -3730,7 +3753,7 @@ app.get("/api/popular-movies", async (req, res) => {
         || await readCache(`popular-movies-${new Date(Date.now() - 864e5).toISOString().slice(0, 10)}`, STALE_TTL_MS);
       if (stale && stale.length) {
         console.error(`Popular-movies: serving ${stale.length} cached title(s) instead — every live source failed.`);
-        return res.json({ movies: stale, stale: true });
+        return res.json({ movies: await fillMissingRuntimes(stale, todayISO), stale: true });
       }
     } catch { /* fall through to the error below */ }
     res.status(500).json({ error: err.message, movies: [] });
@@ -3819,6 +3842,8 @@ app.get("/api/movies", async (req, res) => {
     // Strategy: AMC always (fast official API); Regal only if already cached
     // from a prior /api/search in this session (free, no proxy cost).
     const chainMovieTitles = new Set();
+    // AMC ships runTime on every showing; it was being thrown away here.
+    const listedRuntimes = new Map(); // lowercased title -> minutes
 
     // AMC — pick the single largest AMC in range (highest trailing number
     // in the name, e.g. "AMC Mesquite 30" → 30) and fetch its showtimes.
@@ -3849,7 +3874,11 @@ app.get("/api/movies", async (req, res) => {
         const biggest = amcTheatersHere.reduce((a, b) => screenCount(a) >= screenCount(b) ? a : b);
         try {
           const sts = await getAmcShowtimesForTheater({ theatreId: biggest.id, dateISO: searchDateISO });
-          sts.map((s) => s.movieName).filter(Boolean).forEach((title) => chainMovieTitles.add(title));
+          for (const s of sts) {
+            if (!s.movieName) continue;
+            chainMovieTitles.add(s.movieName);
+            if (s.runTime) listedRuntimes.set(s.movieName.trim().toLowerCase(), s.runTime);
+          }
           if (chainMovieTitles.size > 0)
             console.error(`/api/movies: AMC direct — ${chainMovieTitles.size} title(s) from ${biggest.name}`);
         } catch (err) {
@@ -3936,19 +3965,13 @@ app.get("/api/movies", async (req, res) => {
       if (key && !moviesByKey.has(key)) moviesByKey.set(key, title.trim());
     }
     // Same shape as /api/popular-movies so the dropdown renders identically
-    // whichever endpoint filled it. Runtimes come from the AMC catalog, which
-    // is one shared request for the whole list rather than a lookup per title.
+    // whichever endpoint filled it.
     const titles = [...moviesByKey.values()].sort((a, b) =>
       a.toLowerCase().localeCompare(b.toLowerCase())
     );
-    const movies = await Promise.all(
-      titles.map(async (title) => {
-        let runtimeMinutes = null;
-        try {
-          runtimeMinutes = await getAmcRuntimeFromCatalog(title, searchDateISO);
-        } catch { /* dropdown is still useful without a runtime */ }
-        return { title, runtimeMinutes };
-      })
+    const movies = await fillMissingRuntimes(
+      titles.map((title) => ({ title, runtimeMinutes: listedRuntimes.get(title.toLowerCase()) ?? null })),
+      searchDateISO
     );
 
     res.json({
