@@ -9,6 +9,7 @@
 <meta name="robots" content="noindex, nofollow" />
 <title>Showtime Finder</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <!-- Open Graph — iMessage / Slack / Discord link previews -->
 <meta property="og:type"        content="website" />
 <meta property="og:url"         content="https://showtimefinder.jmvarghe.vip" />
@@ -548,6 +549,9 @@
     .stubs-row { flex-wrap: wrap; gap: 0 6px; justify-content: center; }
     .stubs-amt { font-size: 11px; white-space: normal; }
     .card-body { padding: 12px; }
+    /* iOS zooms the whole page when a field under 16px is focused, and stays
+       zoomed -- which pushed every result card off the right edge. */
+    input[type], select, textarea { font-size: 16px; }
   }
 
   .ratings { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 6px; }
@@ -1150,12 +1154,7 @@
     // The movie <select> is populated from a discovery call that may not have
     // run, or may not list a film only playing at one chain. Add it rather
     // than silently failing to select it.
-    if (![...els.movie.options].some((o) => o.value === title)) {
-      const opt = document.createElement('option');
-      opt.value = title;
-      opt.textContent = title;
-      els.movie.appendChild(opt);
-    }
+    mergeMovieOptions([{ title }]);
     els.movie.value = title;
 
     // The free-time window's END becomes the movie search's "must end by":
@@ -1241,16 +1240,14 @@
       const res = await fetch('/api/popular-movies');
       const data = await res.json();
       if (res.ok && data.movies && data.movies.length) {
-        els.movie.innerHTML = data.movies.map(movieOptionHtml).join('');
-        if (pendingMovieSelection && data.movies.some((m) => movieTitleOf(m) === pendingMovieSelection)) {
-          els.movie.value = pendingMovieSelection;
-          pendingMovieSelection = null;
-        }
-      } else {
+        // Merged rather than replacing: "Not seeing it?" or a "Price this
+        // film" click may have added titles while this was in flight.
+        if (mergeMovieOptions(data.movies)) pendingMovieSelection = null;
+      } else if (!dropdownMovies.size) {
         els.movie.innerHTML = '<option value="" disabled selected>Fill in a location and press "Not seeing it?" to find movies</option>';
       }
     } catch {
-      els.movie.innerHTML = '<option value="" disabled selected>Fill in a location and press "Not seeing it?" to find movies</option>';
+      if (!dropdownMovies.size) els.movie.innerHTML = '<option value="" disabled selected>Fill in a location and press "Not seeing it?" to find movies</option>';
     }
     // Whatever "Not seeing it?" already found for this date, from an earlier
     // visit today.
@@ -1350,10 +1347,15 @@
   // Fails quietly: a broken or blocked image hides itself rather than leaving a
   // torn-icon placeholder, since a missing poster shouldn't damage the card.
   function posterHtml(ratings, title, size = 'thumb') {
-    const url = ratings && ratings.poster;
+    let url = ratings && ratings.poster;
     if (!url) return '';
+    // MDBList hands out TMDB's ORIGINAL file -- 2000x3000, megabytes -- which
+    // on a phone sat as an empty box long enough to look broken. w780 covers
+    // the header at 3x; thumbnails need far less.
+    url = url.replace('/t/p/original/', size === 'hero' ? '/t/p/w780/' : '/t/p/w342/');
+    // The header is above the fold, so lazy-loading only delays it.
     return `<img class="poster poster-${size}" src="${escapeHtml(url)}" alt="${escapeHtml(title || '')} poster"
-                 loading="lazy" onerror="this.remove()">`;
+                 loading="${size === 'hero' ? 'eager' : 'lazy'}" onerror="this.remove()">`;
   }
 
   // Movie mode's title-page header. Split out from renderResults so it can be
@@ -1480,37 +1482,52 @@
     } catch { /* storage unavailable */ }
   }
 
-  // Adds titles the dropdown doesn't have yet, fills runtimes it was missing,
-  // and keeps the list alphabetical. Returns true if the saved selection from
-  // a previous visit was among them and got applied.
+  // Everything the dropdown lists, by title. Rendered whole each time rather
+  // than patched option by option, because titles now live in two sections.
+  const dropdownMovies = new Map();
+
+  // The server marks a title "older" only on evidence (see enrichDropdownMovies
+  // in server.js); unknown stays with the new releases rather than burying a
+  // premiere. With nothing classified, there's no point splitting the list.
+  function renderMovieDropdown(selection) {
+    const sorted = [...dropdownMovies.values()].sort((a, b) =>
+      movieTitleOf(a).localeCompare(movieTitleOf(b), undefined, { sensitivity: 'base' }));
+    const older = sorted.filter((m) => m.releaseGroup === 'older');
+    const current = sorted.filter((m) => m.releaseGroup !== 'older');
+    els.movie.innerHTML = older.length && current.length
+      ? `<optgroup label="New releases">${current.map(movieOptionHtml).join('')}</optgroup>` +
+        `<optgroup label="Re-releases &amp; events">${older.map(movieOptionHtml).join('')}</optgroup>`
+      : sorted.map(movieOptionHtml).join('');
+    if (selection && dropdownMovies.has(selection)) els.movie.value = selection;
+  }
+
+  // Adds titles the dropdown doesn't have yet and fills in what it was missing
+  // (runtime, section). Returns true if the saved selection from a previous
+  // visit was among them and got applied.
   function mergeMovieOptions(movies) {
     const currentSelection = els.movie.value;
-    const byValue = new Map([...els.movie.options].filter((o) => o.value).map((o) => [o.value, o]));
-    let added = false;
+    let changed = false;
     for (const m of movies) {
-      const title = movieTitleOf(m);
-      const existing = byValue.get(title);
+      const entry = typeof m === 'string' ? { title: m } : m;
+      const title = movieTitleOf(entry);
+      if (!title) continue;
+      const existing = dropdownMovies.get(title);
       if (!existing) {
-        els.movie.insertAdjacentHTML('beforeend', movieOptionHtml(m));
-        added = true;
-      } else if (!existing.dataset.runtime && m.runtimeMinutes) {
-        existing.textContent = `${title} (${fmtRuntime(m.runtimeMinutes)})`;
-        existing.dataset.runtime = m.runtimeMinutes;
+        dropdownMovies.set(title, entry);
+        changed = true;
+      } else if ((!existing.runtimeMinutes && entry.runtimeMinutes) || (!existing.releaseGroup && entry.releaseGroup)) {
+        dropdownMovies.set(title, {
+          ...existing,
+          runtimeMinutes: existing.runtimeMinutes || entry.runtimeMinutes,
+          releaseGroup: existing.releaseGroup || entry.releaseGroup,
+        });
+        changed = true;
       }
     }
-    if (added) {
-      // A "nothing loaded" placeholder no longer applies once real titles exist.
-      [...els.movie.options].filter((o) => !o.value).forEach((o) => o.remove());
-      [...els.movie.options]
-        .sort((a, b) => a.value.localeCompare(b.value, undefined, { sensitivity: 'base' }))
-        .forEach((opt) => els.movie.appendChild(opt)); // re-appending moves, doesn't duplicate
-    }
-    if (pendingMovieSelection && [...els.movie.options].some((o) => o.value === pendingMovieSelection)) {
-      els.movie.value = pendingMovieSelection;
-      return true;
-    }
-    if (currentSelection) els.movie.value = currentSelection;
-    return false;
+    const applyPending = !!pendingMovieSelection && dropdownMovies.has(pendingMovieSelection);
+    if (changed) renderMovieDropdown(applyPending ? pendingMovieSelection : currentSelection);
+    else if (applyPending) els.movie.value = pendingMovieSelection;
+    return applyPending;
   }
 
   function setupChipGroupToggle(toggleEl, chipsEl, sectionEl, statusEl) {
@@ -1587,7 +1604,7 @@
         mergeMovieOptions(data.movies);
         saveNearbyMovies(els.searchDate.value, data.movies);
         pendingMovieSelection = null;
-      } else if (![...els.movie.options].some((o) => o.value)) {
+      } else if (!dropdownMovies.size) {
         // Only show "nothing found" if the dropdown is otherwise
         // genuinely empty -- if the pre-loaded popular list already has
         // options, this button coming back empty just means "nothing
@@ -1796,6 +1813,12 @@
       if (resolvedLocation) regalParams.set('location', resolvedLocation);
     } else {
       regalParams.set('place', place);
+    }
+    // The runtime the dropdown showed, so the search doesn't fall back to a
+    // default for a film whose real runtime this page already knows.
+    if (localRuntimeMin) {
+      params.set('runtimeHint', localRuntimeMin);
+      regalParams.set('runtimeHint', localRuntimeMin);
     }
 
     // Both endpoints now stream. They feed two separate arrays and share one

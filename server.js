@@ -65,7 +65,7 @@ const { getLandmarkTheatersInRange, getLandmarkShowtimesForTheaters, getLandmark
 const { matchesMovie } = require("./lib/priceAdapters/serpapi");
 const CINEMARK_THEATER_SLUGS = require("./lib/cinemark-theater-slugs");
 const { getRuntimeForMovieAtTheater, getCinemarkMovieIdForTitle, getCinemarkMovieIdsForTitle } = require("./lib/cinemark-runtime-scraper");
-const { geocodeForward } = require("./lib/geocode");
+const { geocodeForward, geocodeReverse } = require("./lib/geocode");
 const { getRuntimeMinutes, getRuntimeInfo } = require("./lib/movie-runtime");
 const { getRatings: getMovieRatings, isConfigured: isRatingsConfigured } = require("./lib/movie-ratings");
 const { configuredProviders } = require("./lib/proxyProviders");
@@ -225,6 +225,24 @@ app.get("/og-image.png", async (req, res) => {
     res.send(_ogImagePng);
   } catch (e) {
     res.status(500).send("could not render og image");
+  }
+});
+
+// Home-screen icon. iOS ignores SVG icons and requests this exact path even
+// without a <link>, so it's rendered once from the SVG like the OG image.
+let _touchIconPng = null;
+app.get(["/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"], (req, res) => {
+  try {
+    if (!_touchIconPng) {
+      const { Resvg } = require("@resvg/resvg-js");
+      const svg = require("fs").readFileSync(require("path").join(__dirname, "public", "apple-touch-icon.svg"));
+      _touchIconPng = new Resvg(svg, { fitTo: { mode: "width", value: 180 } }).render().asPng();
+    }
+    res.set("Content-Type", "image/png");
+    res.set("Cache-Control", "public, max-age=86400");
+    res.send(_touchIconPng);
+  } catch (e) {
+    res.status(500).send("could not render touch icon");
   }
 });
 
@@ -914,7 +932,16 @@ const RUNTIME_MIN = 128;
 // The slug comes from the static nationwide theater list filtered by distance
 // -- no network -- so this can be resolved before discovery runs and doesn't
 // give back the head start of kicking the lookup off early.
-function makeRuntimeSource({ originLat, originLng, radiusMin, dateISO }) {
+// The runtime the movie dropdown already showed, sent back by the page. That
+// number came from this server's own sources (often a local AMC listing that
+// the national catalog below doesn't carry), so the search shouldn't contradict
+// it with a fallback. Bounded so a bad value can't drive the deadline filter.
+function parseRuntimeHint(v) {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 30 && n <= 400 ? n : null;
+}
+
+function makeRuntimeSource({ originLat, originLng, radiusMin, dateISO, runtimeHint = null }) {
   // EVERY Cinemark in range, nearest first -- not just the closest one.
   // A theater page only lists what's playing THERE, so a single page answers
   // for the films at that location and silently misses the rest. Live run:
@@ -949,6 +976,15 @@ function makeRuntimeSource({ originLat, originLng, radiusMin, dateISO }) {
     } catch (err) {
       console.error(`Runtime: AMC catalog lookup failed for "${movieTitle}":`, err.message);
     }
+
+    if (runtimeHint) return runtimeHint;
+
+    // MDBList/OMDb, via the ratings lookup the search fires for this title
+    // anyway -- shared in flight and cached, so usually free here.
+    const fromRatings = await getMovieRatings(movieTitle, Number(String(dateISO).slice(0, 4)))
+      .then((r) => r?.runtimeMinutes || null)
+      .catch(() => null);
+    if (fromRatings) return fromRatings;
 
     for (const slug of cinemarkSlugs) {
       try {
@@ -1644,7 +1680,7 @@ app.get("/api/search", searchRateLimiter, dailySearchBudget, async (req, res) =>
     const runtimePromise = getRuntimeInfo(
       movie,
       RUNTIME_MIN,
-      makeRuntimeSource({ originLat, originLng, radiusMin, dateISO: searchDateISO })
+      makeRuntimeSource({ originLat, originLng, radiusMin, dateISO: searchDateISO, runtimeHint: parseRuntimeHint(req.query.runtimeHint) })
     );
     // One film, so one lookup -- fired alongside discovery. Never blocks a
     // result. Year from the search date, so OMDb resolves the film now in
@@ -1694,8 +1730,10 @@ app.get("/api/search", searchRateLimiter, dailySearchBudget, async (req, res) =>
       // Overpass OSM theater search
       findNearbyTheaters({ lat: originLat, lng: originLng, radiusMeters }),
 
-      // SerpApi canonical location string (needed for SerpApi fallback only)
-      resolveCanonicalLocation(location)
+      // SerpApi canonical location string (needed for SerpApi fallback only).
+      // A "Use my location" search arrives with coordinates and no place name.
+      (location ? Promise.resolve(location) : geocodeReverse(originLat, originLng).then((l) => (location = l)))
+        .then(resolveCanonicalLocation)
         .then((r) => ({ ok: true, value: r }))
         .catch((err) => ({ ok: false, err: err.message })),
 
@@ -2773,7 +2811,9 @@ app.get("/api/search", searchRateLimiter, dailySearchBudget, async (req, res) =>
           harkinsDirectTheaters.map((theater) =>
             chainLimit(async () => {
               if (aborted) return;   // client left -- drain the queue
-              const theaterName = theater.name;
+              // Harkins' own list names a theater by location alone ("Cerritos
+              // 16"), which on a card says nothing about whose theater it is.
+              const theaterName = /^harkins\b/i.test(theater.name) ? theater.name : `Harkins ${theater.name}`;
               const { harkinsId, cinemaId } = theater;
               const theaterPerformances = allPerformances.filter((p) => String(p.theatreId) === String(harkinsId));
 
@@ -3639,20 +3679,42 @@ app.get("/api/us-map", (req, res) => {
 // search for that film will make anyway. Capped so a slow lookup leaves one
 // blank rather than holding up the whole dropdown; it keeps running and fills
 // the cache for next time.
+//
+// Also sorts each title into "new" or "older" for the dropdown's sections. A
+// chain's release date can't do it: Harkins dates "Casper" and "Catching Fire"
+// to the start of THIS run, same as a premiere. The ratings lookup can -- it
+// only accepts a film from this year or last, so a title it matches is a
+// current release, and one it can't match (an anniversary print, an "Encore",
+// a "(1984)" Fright Night) isn't. Evidence is required for "older": a lookup
+// still running when the cap hits leaves the group null, and the page treats
+// null as new rather than burying a premiere.
+//
+// Limited to a few at a time: a cold dropdown is 50-70 titles, and firing them
+// all at MDBList at once invites a 429 that would then be cached as "no match".
 const DROPDOWN_RUNTIME_WAIT_MS = 4000;
-function fillMissingRuntimes(movies, dateISO) {
+const dropdownRatingsLimit = pLimit(4);
+const RERELEASE_MARKERS = /\b(anniversary|re-?release|encore|sing-?along|remaster(ed)?|restoration)\b|\((19[0-9]{2}|200[0-9]|201[0-9])\)/i;
+const SERIES_CODE = /^[A-Z]{2,4}\d{1,2}:/; // "HP26:", "MOM2:" -- see normalizeTitle in movie-ratings.js
+function enrichDropdownMovies(movies, dateISO) {
   const year = Number(String(dateISO).slice(0, 4)) || new Date().getFullYear();
   return Promise.all(movies.map(async (m) => {
-    if (m.runtimeMinutes) return m;
-    let runtimeMinutes = await getAmcRuntimeFromCatalog(m.title, dateISO).catch(() => null);
-    if (!runtimeMinutes && isRatingsConfigured()) {
-      const ratings = await Promise.race([
-        getMovieRatings(m.title, year).catch(() => null),
-        new Promise((resolve) => setTimeout(() => resolve(null), DROPDOWN_RUNTIME_WAIT_MS)),
-      ]);
-      runtimeMinutes = ratings?.runtimeMinutes || null;
-    }
-    return { ...m, runtimeMinutes };
+    const lookup = isRatingsConfigured()
+      ? await Promise.race([
+          dropdownRatingsLimit(() => getMovieRatings(m.title, year)).then((r) => ({ r }), () => ({ r: null })),
+          new Promise((resolve) => setTimeout(() => resolve(null), DROPDOWN_RUNTIME_WAIT_MS)),
+        ])
+      : null;
+
+    let runtimeMinutes = m.runtimeMinutes
+      || await getAmcRuntimeFromCatalog(m.title, dateISO).catch(() => null)
+      || lookup?.r?.runtimeMinutes
+      || null;
+
+    let releaseGroup = null;
+    if (RERELEASE_MARKERS.test(m.title) || SERIES_CODE.test(m.title)) releaseGroup = "older";
+    else if (lookup) releaseGroup = lookup.r && (Number(String(lookup.r.year).slice(0, 4)) || year) >= year - 1 ? "new" : "older";
+
+    return { ...m, runtimeMinutes, releaseGroup };
   }));
 }
 
@@ -3678,7 +3740,7 @@ app.get("/api/popular-movies", async (req, res) => {
 
   try {
     const fresh = await readCache(cacheKey, ttlToMidnight);
-    if (fresh && fresh.length) return res.json({ movies: await fillMissingRuntimes(fresh, todayISO) });
+    if (fresh && fresh.length) return res.json({ movies: await enrichDropdownMovies(fresh, todayISO) });
   } catch { /* cache is best-effort; fall through to the live fetch */ }
 
   // TWO sources, tried in order. AMC was the only one, which made a single
@@ -3729,7 +3791,7 @@ app.get("/api/popular-movies", async (req, res) => {
         if (!prev || (!prev.runtimeMinutes && m.runtimeMinutes)) byTitle.set(key, m);
       }
       if (!byTitle.size) throw new Error("returned no titles");
-      const movies = await fillMissingRuntimes([...byTitle.values()], todayISO);
+      const movies = await enrichDropdownMovies([...byTitle.values()], todayISO);
       movies.sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
       writeCache(cacheKey, movies, STALE_TTL_MS);
       console.error(
@@ -3753,7 +3815,7 @@ app.get("/api/popular-movies", async (req, res) => {
         || await readCache(`popular-movies-${new Date(Date.now() - 864e5).toISOString().slice(0, 10)}`, STALE_TTL_MS);
       if (stale && stale.length) {
         console.error(`Popular-movies: serving ${stale.length} cached title(s) instead — every live source failed.`);
-        return res.json({ movies: await fillMissingRuntimes(stale, todayISO), stale: true });
+        return res.json({ movies: await enrichDropdownMovies(stale, todayISO), stale: true });
       }
     } catch { /* fall through to the error below */ }
     res.status(500).json({ error: err.message, movies: [] });
@@ -3831,6 +3893,7 @@ app.get("/api/movies", async (req, res) => {
       });
     }
 
+    if (!location) location = await geocodeReverse(originLat, originLng).catch(() => null);
     let resolvedLocation = location;
     try {
       resolvedLocation = await resolveCanonicalLocation(location);
@@ -3969,7 +4032,7 @@ app.get("/api/movies", async (req, res) => {
     const titles = [...moviesByKey.values()].sort((a, b) =>
       a.toLowerCase().localeCompare(b.toLowerCase())
     );
-    const movies = await fillMissingRuntimes(
+    const movies = await enrichDropdownMovies(
       titles.map((title) => ({ title, runtimeMinutes: listedRuntimes.get(title.toLowerCase()) ?? null })),
       searchDateISO
     );
@@ -4065,7 +4128,7 @@ app.get("/api/search-regal", searchRateLimiter, dailySearchBudget, async (req, r
     const runtimePromise = getRuntimeInfo(
       movie,
       RUNTIME_MIN,
-      makeRuntimeSource({ originLat, originLng, radiusMin, dateISO: searchDateISO })
+      makeRuntimeSource({ originLat, originLng, radiusMin, dateISO: searchDateISO, runtimeHint: parseRuntimeHint(req.query.runtimeHint) })
     );
 
     const radiusMeters = minutesToMeters(Number(radiusMin));
@@ -4575,6 +4638,7 @@ app.get("/api/window-search", searchRateLimiter, dailySearchBudget, async (req, 
       radiusMeters,
     });
 
+    if (!location) location = await geocodeReverse(Number(lat), Number(lng)).catch(() => null);
     let resolvedLocation = location;
     let locationResolutionError = null;
     try {
