@@ -120,6 +120,22 @@
 
   input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
 
+  /* Sits under the end-by time and switches it off. Overrides the uppercase
+     field-label style, since this reads as an option, not a heading. */
+  label.any-end {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 0;
+    font-size: 13px;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  label.any-end input { width: 18px; height: 18px; margin: 0; accent-color: var(--gold); }
+  input[type="time"]:disabled { opacity: .4; }
+
   /* iOS Safari/WebKit (which Brave, Chrome, etc. all run on under Apple's
      rules) doesn't fully honor box-sizing: border-box on the native
      time-input control -- its own picker chrome pads out past the
@@ -880,6 +896,9 @@
         <div class="field field-time">
           <label for="deadline">Must end by</label>
           <input type="time" id="deadline" value="22:00" />
+          <label class="any-end" for="anyEndTime">
+            <input type="checkbox" id="anyEndTime" /> Show all showings that day
+          </label>
         </div>
       </div>
     </div>
@@ -1011,6 +1030,7 @@
     searchDate: document.getElementById('searchDate'),
     radius: document.getElementById('radius'),
     deadline: document.getElementById('deadline'),
+    anyEndTime: document.getElementById('anyEndTime'),
     lat: document.getElementById('lat'),
     lng: document.getElementById('lng'),
     place: document.getElementById('place'),
@@ -1167,7 +1187,13 @@
     // produced. lastRenderData.availableUntil is the window that actually
     // produced the card being clicked.
     const windowEnd = lastRenderData && lastRenderData.availableUntil;
-    if (windowEnd) els.deadline.value = windowEnd;
+    if (windowEnd) {
+      els.deadline.value = windowEnd;
+      // The free-time window's end is a real limit, so it switches the
+      // show-everything option back off.
+      els.anyEndTime.checked = false;
+      els.deadline.disabled = false;
+    }
 
     setMode('movie');
     runSearch();
@@ -1186,6 +1212,8 @@
       if (saved.movie) pendingMovieSelection = saved.movie;
       if (saved.radius) els.radius.value = saved.radius;
       if (saved.deadline) els.deadline.value = saved.deadline;
+      els.anyEndTime.checked = !!saved.anyEndTime;
+      els.deadline.disabled = els.anyEndTime.checked;
       // Guard against restoring a stale "Current location (...)" label
       // from an old session -- it's meaningless without the paired
       // lat/lng, which is deliberately never persisted.
@@ -1224,10 +1252,12 @@
       movie: els.movie.value,
       radius: els.radius.value,
       deadline: els.deadline.value,
+      anyEndTime: els.anyEndTime.checked,
       place: placeToSave,
     }));
   }
   loadSaved();
+  els.anyEndTime.addEventListener('change', () => { els.deadline.disabled = els.anyEndTime.checked; });
 
 
   // Pre-load a location-independent list of what's currently in wide
@@ -1692,7 +1722,8 @@
     const place = els.place.value.trim();
     const radius = els.radius.value.trim();
     searchedRadiusMin = Number(radius) || null;
-    const deadline = els.deadline.value.trim();
+    // "any" lifts the end-by limit server-side; started showings still drop.
+    const deadline = els.anyEndTime.checked ? 'any' : els.deadline.value.trim();
 
     if (regalEs) { regalEs.close(); regalEs = null; }
     if (searchEs) { searchEs.close(); searchEs = null; }
@@ -2948,7 +2979,9 @@
     // Default view: only show showings starting within 6 hours of the deadline.
     // Earlier showings are hidden behind a "show more" toggle so the default
     // view stays focused on actionable options close to "now + runtime".
-    const deadlineVal = els.deadline && els.deadline.value;
+    // With no end time there's no "close to the deadline" to focus on, so
+    // every showing is listed together.
+    const deadlineVal = !els.anyEndTime.checked && els.deadline && els.deadline.value;
     const EARLY_WINDOW_HOURS = 6;
     let earlyResults = [];
     let lateResults = displayResults;

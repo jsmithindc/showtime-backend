@@ -1554,6 +1554,14 @@ async function applyRealDriveTimes({ originLat, originLng, radiusMin, lists }) {
   );
 }
 
+// "any" turns the end-by limit off: every showing that hasn't started yet.
+// A time before 06:00 means after midnight, so it counts as the next day.
+function parseDeadlineMinutes(deadline) {
+  if (deadline === "any") return Infinity;
+  const m = toMinutesSinceMidnight(deadline);
+  return m < 360 ? m + 1440 : m;
+}
+
 app.get("/api/search", searchRateLimiter, dailySearchBudget, async (req, res) => {
   const { movie, radiusMin, deadline, formats, chains, date, clientTime, debug, debugSerpApi } = req.query;
   let { lat, lng, location, place } = req.query;
@@ -1592,8 +1600,7 @@ app.get("/api/search", searchRateLimiter, dailySearchBudget, async (req, res) =>
 
   const wantedFormats = formats ? formats.split(",").map((f) => f.toLowerCase()) : null;
   const wantedChains = chains ? chains.split(",").map((c) => c.toLowerCase()) : null;
-  const deadlineMinutesRaw = toMinutesSinceMidnight(deadline);
-  const deadlineMinutes = deadlineMinutesRaw < 360 ? deadlineMinutesRaw + 1440 : deadlineMinutesRaw;
+  const deadlineMinutes = parseDeadlineMinutes(deadline);
   const originLat = Number(lat);
   const originLng = Number(lng);
 
@@ -4110,8 +4117,7 @@ app.get("/api/search-regal", searchRateLimiter, dailySearchBudget, async (req, r
   }
 
   const wantedFormats = formats ? formats.split(",").map((f) => f.toLowerCase()) : null;
-  const deadlineMinutesRaw = toMinutesSinceMidnight(deadline);
-  const deadlineMinutes = deadlineMinutesRaw < 360 ? deadlineMinutesRaw + 1440 : deadlineMinutesRaw;
+  const deadlineMinutes = parseDeadlineMinutes(deadline);
   const originLat = Number(lat);
   const originLng = Number(lng);
   const theaterTimezone = getTimezoneForLocation(originLat, originLng);
