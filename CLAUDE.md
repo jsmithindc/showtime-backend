@@ -257,6 +257,17 @@ answer meaning "OMDb doesn't have this film" -- an unwrapped null is
 indistinguishable from a cache miss and would be re-asked forever. The sync `readDiskCache`/`writeDiskCache` still exist and are
 local-only -- prefer `readCache`/`writeCache` for anything new.
 
+**Per-showing prices are cached for 6h** (`lib/price-cache.js`), keyed by the
+chain's own showing id, so a repeated search -- or one with a later end time,
+wider radius or "show all" -- skips the slow part. Every adapter's exported
+`getTicketPricing` is wrapped; Regal checks per performance inside
+`getPricedShowtimes` BEFORE `cart.get()`, so a fully cached theater opens no cart
+and spends no createOrder POST. Cinemark's and Cinema West's showtime listings
+(both through Camofox) are cached for 1h. Only successes are stored. AMC is not
+wrapped: its prices arrive with its showtimes in one fast request per theater.
+`price-model.record()` counts each showing once per process, since repeat
+searches used to re-record the same price.
+
 **Redis keys carry a `showtime:` prefix** (`redisKey()` in `disk-cache.js`), so
 the cache name in a log line is NOT the key in Upstash: `ratings-residentevil::2026`
 is stored as `showtime:ratings-residentevil::2026`. A `DEL` on the bare name
