@@ -666,7 +666,11 @@ other three `flushHeaders()` sites are immediate-exit paths and need nothing.
   was the last chain still requested from Render's IP, and it now goes through
   Camofox on the residential connection, which is exactly why Regal works from
   the same host. The pacing and the breaker are kept for the direct path, which
-  is still the fallback when Camofox isn't configured. Note the learned price
+  is still the fallback when Camofox isn't configured. The theater-page fetch in
+  `lib/cinemark-runtime-scraper.js` (movie-ID and runtime lookups) was missed in
+  that move and 403'd from Render until 2026-10-24; it now goes through
+  `camofox-cinemark` too, and its page cache expires after 6h instead of living
+  for the whole process. Note the learned price
   model also covers the gap with estimates where a Cinemark bucket exists.
 - **Regal ticket types do not always fill `LongDescription`.** Colorado Center
   9's IMAX 70mm ticket arrives as `{Description: "General Admission",
